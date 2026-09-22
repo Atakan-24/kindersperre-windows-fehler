@@ -25,16 +25,19 @@ Dieses Repository ist **privat** und dient nur als Sicherung fuer den Besitzer/A
 
 ## Screenshots
 
-Aus Testlaeufen (Zerotest), nicht vom echten Betrieb.
+Aus einem Testlauf vom 22.09.2026, aktueller Stand (rein synthetisch erzeugt, kein echter Bildschirminhalt).
 
-![Sperr-Ansicht mit Betreuer-PIN-Feld](shot.png)
-*Einfache Sperr-Ansicht mit versteckbarem Betreuer-PIN-Feld unten rechts.*
+![Bluescreen-Ansicht](shot-bsod.png)
+*An einen echten Windows-10-Absturz angelehnte Bluescreen-Ansicht, mit echten Angaben zur verbauten Grafikkarte.*
 
-![Bluescreen-Ansicht](shot5.png)
-*An einen echten Windows-Absturz angelehnte Bluescreen-Ansicht, mit echten Angaben zur verbauten Grafikkarte.*
+![Logo-Ansicht](shot-logo.png)
+*Windows-Logo mit Ladepunkten nach dem Bluescreen.*
 
-![Terminal-Ansicht mit Countdown](shot3.png)
-*Fruehe Fassung der Terminal-Ansicht (spaeter durch einen Wiederherstellungsversuchs-Zaehler auf einer echten Zeitachse ersetzt).*
+![Reparatur-Ansicht](shot-repair.png)
+*"Diagnose des PCs wird ausgefuehrt" - Zwischenschritt vor dem periodischen Terminal-Bildschirm.*
+
+![Terminal-Ansicht](shot-terminal.png)
+*Terminal-Bildschirm mit Wiederherstellungsversuchs-Zaehler (N von 30) auf einer Zeitachse, kein Countdown.*
 
 ## Konfiguration
 
@@ -46,6 +49,8 @@ Versionen der Skripte, jeweils vor einer einzelnen Aenderung angelegt (Entwicklu
 
 - `pin.json` / `Set-PIN.ps1` (PIN-Hash bzw. das Skript, das ihn setzt)
 - Echte Nutzungsdaten: `zeit.json`, Protokolle, Verlaufsdateien, tagesaktuelle Registry-Sicherungen
+- Testbilder, die echten Bildschirminhalt zeigen wuerden (Grafikfehler-Modus zieht den echten Inhalt
+  heran und wurde deshalb bewusst nicht mit aufgenommen)
 
 ## Kontext
 
