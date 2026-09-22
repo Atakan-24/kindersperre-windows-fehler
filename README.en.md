@@ -25,16 +25,19 @@ This repository is **private** and serves only as a backup for the owner/adminis
 
 ## Screenshots
 
-From test runs (Zerotest), not from live operation.
+From a test run on 2026-09-22, current state (purely synthetic, no real screen content).
 
-![Lock screen with supervisor PIN field](shot.png)
-*Simple lock view with a hideable supervisor-PIN field at the bottom right.*
+![Bluescreen view](shot-bsod.png)
+*Bluescreen view modeled on a real Windows 10 crash, with real details of the installed graphics card.*
 
-![Bluescreen view](shot5.png)
-*Bluescreen view modeled on a real Windows crash, with real details of the installed graphics card.*
+![Logo view](shot-logo.png)
+*Windows logo with loading dots after the bluescreen.*
 
-![Terminal view with countdown](shot3.png)
-*Early version of the terminal view (later replaced by a recovery-attempt counter spread across a real timeline).*
+![Repair view](shot-repair.png)
+*"Running PC diagnostics" - an intermediate step before the periodic terminal screen.*
+
+![Terminal view](shot-terminal.png)
+*Terminal screen with a recovery-attempt counter (N of 30) spread across a timeline, no countdown.*
 
 ## Configuration
 
@@ -46,6 +49,8 @@ of the scripts, each created right before a single change (development history).
 
 - `pin.json` / `Set-PIN.ps1` (the PIN hash, and the script that sets it)
 - Real usage data: `zeit.json`, logs, history files, today's registry backups
+- Test images that would show real screen content (the glitch-effect mode draws on the real
+  screen content, so those were deliberately left out)
 
 ## Context
 
