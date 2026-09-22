@@ -1,0 +1,7 @@
+{
+    "LimitMin":  480,
+    "ResetHour":  6,
+    "IdleMin":  5,
+    "GraceMin":  15,
+    "BonusMin":  60
+}

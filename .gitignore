@@ -1,0 +1,16 @@
+﻿pin.json
+Set-PIN.ps1
+zeit.json
+zeit.json.bak-*
+log.txt
+claude-start.log
+lockstart.json
+bonus
+  .txt
+verlauf.csv
+crash-*.txt
+idle-*.txt
+hoyoprotect-sddl-vor-start-recht.txt
+hyp-hk4e-oeztunc-vor-installpat
+  h.reg
+layers-oeztunc-vor-runasinvoker.reg

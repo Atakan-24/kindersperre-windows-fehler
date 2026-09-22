@@ -1,0 +1,10 @@
+{
+    "WeekdayLimitMin":  360,
+    "WeekendLimitMin":  480,
+    "ResetHour":  6,
+    "IdleMin":  5,
+    "GraceMin":  15,
+    "BonusMin":  60,
+    "FreeDays":  [],
+    "ExcludeUsers":  ["Verwalter"]
+}

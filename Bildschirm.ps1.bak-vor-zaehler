@@ -1,0 +1,447 @@
+﻿# Sperrbildschirm der Kindersperre: sieht aus wie ein Systemabsturz im Terminal (schwarz, monospace, rot/grau).
+# Wird von Sperre.ps1 als SYSTEM in der Benutzersitzung gestartet. Schliesst sich nur, wenn das Limit nicht mehr gilt
+# (neuer Tag / Bonus durch Betreuer-PIN). Im Testmodus (-TestSeconds) schliesst er sich nach der angegebenen Zeit.
+param([int]$TestSeconds = 0, [string]$Shot = '')
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$Dir  = 'C:\ProgramData\Kindersperre'
+$cfg  = Get-Content (Join-Path $Dir 'config.json') -Raw | ConvertFrom-Json
+$test = $TestSeconds -gt 0
+$script:allowClose = $false
+$script:wasMuted   = $false
+$script:muteOk     = $false
+$script:lastLocked = $true
+$script:fails      = 0
+$script:blockedUntil = [datetime]::MinValue
+$script:start      = Get-Date
+$script:shotDone   = $false
+$script:tick       = 0
+$script:errId      = ('{0:X4}-{1:X4}-{2:X4}' -f (Get-Random -Maximum 65535), (Get-Random -Maximum 65535), (Get-Random -Maximum 65535))
+
+function OLog($m) { if ($test) { ('{0}  {1}' -f (Get-Date -Format 'HH:mm:ss'), $m) | Out-File (Join-Path $Dir 'overlay.log') -Append -Encoding ascii } }
+
+# ---- Ton stumm schalten (Standard-Ausgabegeraet) ----
+try {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorComObject { }
+[ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDeviceEnumerator { int EnumAudioEndpoints(int flow, int mask, out IntPtr devs); int GetDefaultAudioEndpoint(int flow, int role, out IMMDevice dev); }
+[ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDevice { int Activate(ref Guid iid, int clsCtx, IntPtr p, [MarshalAs(UnmanagedType.IUnknown)] out object o); }
+[ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioEndpointVolume {
+    int RegisterControlChangeNotify(IntPtr p); int UnregisterControlChangeNotify(IntPtr p); int GetChannelCount(out uint c);
+    int SetMasterVolumeLevel(float l, ref Guid g); int SetMasterVolumeLevelScalar(float l, ref Guid g);
+    int GetMasterVolumeLevel(out float l); int GetMasterVolumeLevelScalar(out float l);
+    int SetChannelVolumeLevel(uint ch, float l, ref Guid g); int SetChannelVolumeLevelScalar(uint ch, float l, ref Guid g);
+    int GetChannelVolumeLevel(uint ch, out float l); int GetChannelVolumeLevelScalar(uint ch, out float l);
+    int SetMute([MarshalAs(UnmanagedType.Bool)] bool m, ref Guid g); int GetMute([MarshalAs(UnmanagedType.Bool)] out bool m);
+}
+public class KsAudio {
+    static IAudioEndpointVolume Vol() {
+        IMMDeviceEnumerator en = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
+        IMMDevice dev; en.GetDefaultAudioEndpoint(0, 1, out dev);
+        Guid iid = typeof(IAudioEndpointVolume).GUID; object o; dev.Activate(ref iid, 23, IntPtr.Zero, out o);
+        return (IAudioEndpointVolume)o;
+    }
+    public static bool GetMute() { bool m; Vol().GetMute(out m); return m; }
+    public static void SetMute(bool m) { Guid g = Guid.Empty; Vol().SetMute(m, ref g); }
+}
+'@
+    $script:wasMuted = [KsAudio]::GetMute()
+    $script:muteOk = $true
+    OLog "Audio: vorher stumm = $($script:wasMuted)"
+} catch { OLog "Audio-Fehler: $_" }
+
+# ---- Tastensperre + Tastenkombi fuer das versteckte PIN-Feld (Leertaste + F12 + Alt gleichzeitig) ----
+# Die Entscheidung "Taste blockieren?" steckt in KsKeys.Handle (ohne Hook testbar); Proc ruft nur Handle auf.
+$script:keysOk = $false
+try {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class KsKeys {
+    delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", SetLastError = true)] static extern IntPtr SetWindowsHookEx(int idHook, HookProc fn, IntPtr hMod, uint threadId);
+    [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr h);
+    [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr h, int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr GetModuleHandle(string name);
+    [DllImport("user32.dll", SetLastError = true)] static extern bool SystemParametersInfo(uint action, uint param, ref STICKYKEYS pv, uint winIni);
+    [StructLayout(LayoutKind.Sequential)] struct KBDLL { public uint vkCode, scanCode, flags, time; public IntPtr extra; }
+    [StructLayout(LayoutKind.Sequential)] struct STICKYKEYS { public uint cbSize, dwFlags; }
+
+    static HookProc proc; static IntPtr hook = IntPtr.Zero;
+    public static volatile bool Active;         // Tasten werden gesperrt
+    public static volatile bool AllowShift;     // Umschalt erlaubt, solange das PIN-Feld sichtbar ist (PIN darf Grossbuchstaben haben)
+    public static volatile bool PinRequested;   // Leertaste + F12 + Alt waren gleichzeitig gedrueckt
+    public static int Blocked;
+    static bool ctrlDown, altDown, spaceDown, f12Down;
+    static STICKYKEYS saved; static bool haveSaved;
+
+    public static void ResetState() { ctrlDown = altDown = spaceDown = f12Down = false; PinRequested = false; Blocked = 0; }
+
+    // true = Ereignis wird verschluckt
+    public static bool Handle(int vk, bool down, bool altFlag)
+    {
+        if (vk == 0x11 || vk == 0xA2 || vk == 0xA3) ctrlDown = down;
+        if (vk == 0x12 || vk == 0xA4 || vk == 0xA5) altDown = down;
+        if (vk == 0x20) spaceDown = down;
+        if (vk == 0x7B) f12Down = down;
+        if (down && altDown && spaceDown && f12Down) PinRequested = true;
+        if (!Active) return false;
+        bool alt = altFlag || altDown;
+        if (vk == 0x5B || vk == 0x5C) return true;                                   // Windows-Taste links/rechts
+        if ((vk == 0x10 || vk == 0xA0 || vk == 0xA1) && !AllowShift) return true;    // Umschalt (auch 5x = Einrastfunktion)
+        if (alt && (vk == 0x09 || vk == 0x1B || vk == 0x73)) return true;            // Alt+Tab, Alt+Esc, Alt+F4
+        if (alt && vk == 0x20) return true;                                          // Alt+Leertaste (Fenstermenue)
+        if (ctrlDown && vk == 0x1B) return true;                                     // Strg+Esc (und Strg+Umschalt+Esc)
+        return false;
+    }
+
+    static IntPtr Proc(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        if (nCode >= 0)
+        {
+            try
+            {
+                KBDLL k = (KBDLL)Marshal.PtrToStructure(lParam, typeof(KBDLL));
+                int msg = wParam.ToInt32();
+                bool down = (msg == 0x100 || msg == 0x104);
+                if (Handle((int)k.vkCode, down, (k.flags & 0x20) != 0)) { Blocked++; return (IntPtr)1; }
+            }
+            catch { }
+        }
+        return CallNextHookEx(hook, nCode, wParam, lParam);
+    }
+
+    public static bool Install()
+    {
+        if (hook != IntPtr.Zero) return true;
+        proc = Proc;
+        hook = SetWindowsHookEx(13, proc, GetModuleHandle(null), 0);
+        DisableSticky();
+        return hook != IntPtr.Zero;
+    }
+
+    public static void Uninstall()
+    {
+        Active = false;
+        if (hook != IntPtr.Zero) { UnhookWindowsHookEx(hook); hook = IntPtr.Zero; }
+        RestoreSticky();
+    }
+
+    static void DisableSticky()
+    {
+        STICKYKEYS s = new STICKYKEYS(); s.cbSize = (uint)Marshal.SizeOf(typeof(STICKYKEYS));
+        if (SystemParametersInfo(0x3A, s.cbSize, ref s, 0))
+        {
+            saved = s; haveSaved = true;
+            STICKYKEYS n = s; n.dwFlags = n.dwFlags & ~0x4u;   // Umschalt-5x-Abfrage aus
+            SystemParametersInfo(0x3B, n.cbSize, ref n, 0);
+        }
+    }
+
+    static void RestoreSticky()
+    {
+        if (haveSaved) { STICKYKEYS s = saved; SystemParametersInfo(0x3B, s.cbSize, ref s, 0); haveSaved = false; }
+    }
+}
+'@
+    $script:keysOk = $true
+} catch { OLog "Tastensperre-Kompilierfehler: $_" }
+# Kill-Switch: in config.json "KeyLock": false schaltet nur das Blockieren ab (Tastenkombi fuer das PIN-Feld bleibt)
+$script:keyLock = ($cfg.KeyLock -ne $false)
+
+function Set-Muted {
+    if ($script:muteOk) { try { if (-not [KsAudio]::GetMute()) { [KsAudio]::SetMute($true) } } catch { } }
+}
+
+# ---- Zustand ----
+function Get-DayKey { (Get-Date).AddHours(-[double]$cfg.ResetHour).ToString('yyyy-MM-dd') }
+
+function Test-FreeDay {
+    # Tage ohne Limit laut config.json "FreeDays" (0 = Sonntag ... 6 = Samstag). Massgeblich ist der Tagesschluessel,
+    # d. h. ein freier Tag laeuft wie das Limit-Zaehlen von ResetHour bis ResetHour des Folgetags.
+    try {
+        $dow = [int][datetime]::ParseExact((Get-DayKey), 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture).DayOfWeek
+        return (@($cfg.FreeDays) -contains $dow)
+    } catch { return $false }
+}
+function Get-LimitMinForToday {
+    # Wochenend-/Wochentaglimit statt einem einzelnen LimitMin. 0=Sonntag,6=Samstag = Wochenende.
+    try {
+        $dow = [int][datetime]::ParseExact((Get-DayKey), 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture).DayOfWeek
+        if ($dow -eq 0 -or $dow -eq 6) { return [double]$cfg.WeekendLimitMin }
+        return [double]$cfg.WeekdayLimitMin
+    } catch { return [double]$cfg.WeekdayLimitMin }
+}
+function Get-Bonus {
+    $f = Join-Path $Dir 'bonus.txt'
+    if (Test-Path $f) { try { $p = (Get-Content $f -Raw).Trim().Split(';'); if ($p[0] -eq (Get-DayKey)) { return [double]$p[1] } } catch { } }
+    return 0.0
+}
+function Test-StillLocked {
+    try {
+        $s = Get-Content (Join-Path $Dir 'zeit.json') -Raw | ConvertFrom-Json
+        if ($s.date -ne (Get-DayKey)) { $script:lastLocked = $false }
+        elseif (Test-FreeDay) { $script:lastLocked = $false }
+        else { $script:lastLocked = ([double]$s.minutes -ge ((Get-LimitMinForToday) + (Get-Bonus) + [double]$cfg.GraceMin)) }
+    } catch { }   # Datei gerade in Bearbeitung: letzten Wert behalten
+    return $script:lastLocked
+}
+function Test-Pin([string]$pin) {
+    try {
+        $p = Get-Content (Join-Path $Dir 'pin.json') -Raw | ConvertFrom-Json
+        $salt = [Convert]::FromBase64String($p.salt)
+        $h = (New-Object Security.Cryptography.Rfc2898DeriveBytes($pin, $salt, 100000)).GetBytes(32)
+        return ([Convert]::ToBase64String($h) -eq $p.hash)
+    } catch { return $false }
+}
+
+# ---- Text im Stil eines Systemabsturzes (erfundener Grafiktreiber-Fehler) mit Live-Countdown ----
+$cRed  = [Drawing.Color]::FromArgb(255, 60, 60)
+$cGray = [Drawing.Color]::FromArgb(200, 200, 200)
+$cWhite = [Drawing.Color]::FromArgb(255, 255, 255)
+$cDim  = [Drawing.Color]::FromArgb(110, 110, 110)
+# Echte Daten dieses PCs (Grafikkarte/Treiber) machen den Fehlerbericht glaubwuerdig
+$script:gpuName = 'NVIDIA GeForce GTX 1060 6GB'; $script:gpuPci = 'PCI\VEN_10DE&DEV_1C03'; $script:drvShort = '552.44'; $script:drvFull = '31.0.15.5244'
+try {
+    $vc = Get-CimInstance Win32_VideoController | Where-Object { $_.Name -like '*NVIDIA*' } | Select-Object -First 1
+    if ($vc) {
+        $script:gpuName = $vc.Name
+        if ($vc.PNPDeviceID -match '(PCI\\VEN_[0-9A-F]{4}&DEV_[0-9A-F]{4})') { $script:gpuPci = $Matches[1] }
+        if ($vc.DriverVersion -match '^\d+\.\d+\.(\d+)\.(\d+)$') {
+            $d = ($Matches[1] + $Matches[2]); if ($d.Length -ge 5) { $d = $d.Substring($d.Length - 5) }
+            $script:drvShort = '{0}.{1}' -f $d.Substring(0, 3), $d.Substring(3); $script:drvFull = $vc.DriverVersion
+        }
+    }
+} catch { }
+function Get-Hex($n) { -join (1..$n | ForEach-Object { '{0:X}' -f (Get-Random -Maximum 16) }) }
+$script:p1 = 'FFFF' + (Get-Hex 12); $script:p2 = 'FFFFF80' + (Get-Hex 9); $script:base = 'FFFFF80' + (Get-Hex 9); $script:stamp = (Get-Hex 8).ToLower()
+$script:crashTime = Get-Date
+function Get-LockLines {
+    $now = Get-Date
+    $reset = $now.Date.AddHours([double]$cfg.ResetHour)
+    if ($now -ge $reset) { $reset = $reset.AddDays(1); $tag = 'morgen' } else { $tag = 'heute' }
+    $rem = $reset - $now
+    $cursor = if ($script:tick % 2 -eq 0) { '_' } else { ' ' }
+    $dot = { param($a, $b, $w) ($a + ' ').PadRight($w, '.') + ' ' + $b }
+    return @(
+        @{ T = ('*** STOP: 0x00000116 (0x{0}, 0x{1}, 0xFFFFFFFFC000009A, 0x0000000000000004)' -f $script:p1, $script:p2); C = $cRed },
+        @{ T = ('***  nvlddmkm.sys - Address {0} base at {1}, DateStamp {2}' -f $script:p2, $script:base, $script:stamp); C = $cGray },
+        @{ T = ''; C = $cGray },
+        @{ T = 'VIDEO_TDR_FAILURE'; C = $cGray },
+        @{ T = ''; C = $cGray },
+        @{ T = 'Der Grafiktreiber hat nicht innerhalb des zulässigen Zeitraums geantwortet (TDR-Timeout)'; C = $cGray },
+        @{ T = 'und konnte nicht zurückgesetzt werden.'; C = $cGray },
+        @{ T = ''; C = $cGray },
+        @{ T = (& $dot 'Gerät' $script:gpuName 12); C = $cGray },
+        @{ T = (& $dot 'PCI-ID' ($script:gpuPci) 12); C = $cGray },
+        @{ T = (& $dot 'Treiber' ('nvlddmkm.sys {0} ({1})' -f $script:drvShort, $script:drvFull) 12); C = $cGray },
+        @{ T = (& $dot 'Status' '0xC000009A STATUS_INSUFFICIENT_RESOURCES' 12); C = $cGray },
+        @{ T = (& $dot 'Zeitpunkt' $script:crashTime.ToString('yyyy-MM-dd HH:mm:ss') 12); C = $cGray },
+        @{ T = ''; C = $cGray },
+        @{ T = ('[ FEHLER ] ' + (& $dot 'Grafiksubsystem' 'ABGESTÜRZT' 40)); C = $cRed },
+        @{ T = ('[ FEHLER ] ' + (& $dot 'Treiber-Wiederherstellung' 'FEHLGESCHLAGEN' 40)); C = $cRed },
+        @{ T = ('[  OK   ] ' + (& $dot 'Speicherabbild gesichert' '100%' 40)); C = $cGray },
+        @{ T = ('[  OK   ] ' + (& $dot 'Schutzmodus' 'AKTIV' 40)); C = $cGray },
+        @{ T = ''; C = $cGray },
+        @{ T = ('> Automatische Wiederherstellung: {0} {1} Uhr' -f $tag, $reset.ToString('HH:mm')); C = $cWhite },
+        @{ T = ('> Verbleibende Zeit: {0:00}:{1:00}:{2:00} {3}' -f [int][Math]::Floor($rem.TotalHours), $rem.Minutes, $rem.Seconds, $cursor); C = $cWhite },
+        @{ T = ''; C = $cGray },
+        @{ T = 'Eingaben werden bis zur Wiederherstellung ignoriert.'; C = $cDim },
+        @{ T = ('Fehler-ID: {0}' -f $script:errId); C = $cDim }
+    )
+}
+$script:lines = Get-LockLines
+
+function Close-All {
+    $script:allowClose = $true
+    if ($script:keysOk) { try { OLog "Gesperrte Tastenereignisse: $([KsKeys]::Blocked)"; [KsKeys]::Uninstall() } catch { } }
+    $script:timer.Stop()
+    if ($script:muteOk -and -not $script:wasMuted) { try { [KsAudio]::SetMute($false); OLog 'Ton wiederhergestellt' } catch { } }
+    foreach ($f in $script:forms) { try { $f.Close() } catch { } }
+    [Windows.Forms.Application]::Exit()
+}
+
+# ---- Fenster auf allen Monitoren ----
+$script:forms = @()
+$script:canvases = @()
+$script:pinBox = $null
+$script:info = $null
+$primaryScreen = [Windows.Forms.Screen]::PrimaryScreen
+$script:brushes = @{}
+
+foreach ($scr in [Windows.Forms.Screen]::AllScreens) {
+    $f = New-Object Windows.Forms.Form
+    $f.FormBorderStyle = 'None'
+    $f.StartPosition = 'Manual'
+    $f.Bounds = $scr.Bounds
+    $f.BackColor = [Drawing.Color]::Black
+    $f.TopMost = $true
+    $f.ShowInTaskbar = $false
+    $f.ControlBox = $false
+    $f.Add_FormClosing({ param($s, $e) if (-not $script:allowClose) { $e.Cancel = $true } })
+
+    # Zeichenflaeche (eigenes Zeichnen, damit der Countdown ohne Flackern aktualisiert wird)
+    $cv = New-Object Windows.Forms.Panel
+    $cv.Dock = 'Fill'
+    $cv.BackColor = [Drawing.Color]::Black
+    $cv.GetType().GetProperty('DoubleBuffered', [Reflection.BindingFlags]'Instance,NonPublic').SetValue($cv, $true, $null)
+    # Schriftgroesse so waehlen, dass der laengste Text und alle Zeilen auf den Monitor passen
+    $maxC = ($script:lines | ForEach-Object { $_.T.Length } | Measure-Object -Maximum).Maximum
+    $fs = [Math]::Max(9, [Math]::Min([int]($scr.Bounds.Width / ($maxC * 0.80)), [int]($scr.Bounds.Height * 0.78 / ($script:lines.Count * 1.79))))
+    $cv.Tag = @{ Font = (New-Object Drawing.Font('Consolas', $fs, [Drawing.FontStyle]::Regular)); FontB = (New-Object Drawing.Font('Consolas', $fs, [Drawing.FontStyle]::Bold)) }
+    $cv.Add_Paint({
+        param($s, $e)
+        $g = $e.Graphics
+        $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+        $font = $s.Tag.Font; $fontB = $s.Tag.FontB
+        $fmt = [Drawing.StringFormat]::GenericTypographic
+        $charW = $g.MeasureString('WWWWWWWWWW', $font, 10000, $fmt).Width / 10
+        $lineH = $font.GetHeight($g) * 1.15
+        $lines = $script:lines
+        $maxChars = ($lines | ForEach-Object { $_.T.Length } | Measure-Object -Maximum).Maximum
+        $x = [Math]::Max(30, ($s.ClientSize.Width - $maxChars * $charW) / 2)
+        $y = [Math]::Max(20, ($s.ClientSize.Height - $lines.Count * $lineH) / 2)
+        foreach ($ln in $lines) {
+            $key = [string]$ln.C.ToArgb()
+            if (-not $script:brushes.ContainsKey($key)) { $script:brushes[$key] = New-Object Drawing.SolidBrush $ln.C }
+            $ft = if ($ln.C -eq $cRed -and $ln.T.StartsWith('***')) { $fontB } else { $font }
+            $g.DrawString($ln.T, $ft, $script:brushes[$key], $x, $y, $fmt)
+            $y += $lineH
+        }
+    })
+    $f.Controls.Add($cv)
+    $script:canvases += $cv
+
+    if ($scr.Primary) {
+        $panel = New-Object Windows.Forms.Panel
+        $panel.Dock = 'Bottom'
+        $panel.Height = 90
+        $panel.BackColor = [Drawing.Color]::Black
+
+        $t = New-Object Windows.Forms.Label
+        $t.Text = 'Wartungscode:'
+        $t.ForeColor = [Drawing.Color]::FromArgb(70, 70, 70)
+        $t.AutoSize = $true
+        $t.Font = New-Object Drawing.Font('Consolas', 11)
+        $t.Location = New-Object Drawing.Point(([int]($scr.Bounds.Width / 2) - 170), 20)
+
+        $box = New-Object Windows.Forms.TextBox
+        $box.UseSystemPasswordChar = $true
+        $box.Width = 140
+        $box.Font = New-Object Drawing.Font('Consolas', 12)
+        $box.BackColor = [Drawing.Color]::FromArgb(18, 18, 18)
+        $box.ForeColor = [Drawing.Color]::FromArgb(150, 150, 150)
+        $box.BorderStyle = 'FixedSingle'
+        $box.Location = New-Object Drawing.Point(([int]($scr.Bounds.Width / 2) - 40), 16)
+
+        $msg = New-Object Windows.Forms.Label
+        $msg.Text = ''
+        $msg.ForeColor = [Drawing.Color]::FromArgb(90, 90, 90)
+        $msg.AutoSize = $true
+        $msg.Font = New-Object Drawing.Font('Consolas', 10)
+        $msg.Location = New-Object Drawing.Point(([int]($scr.Bounds.Width / 2) - 170), 56)
+
+        $box.Add_KeyDown({
+            param($s, $e)
+            $script:pinShownAt = Get-Date
+            if ($e.KeyCode -ne 'Return') { return }
+            $e.SuppressKeyPress = $true
+            $pin = $script:pinBox.Text
+            $script:pinBox.Text = ''
+            if ((Get-Date) -lt $script:blockedUntil) { return }
+            if (Test-Pin $pin) {
+                $bf = Join-Path $Dir 'bonus.txt'
+                $new = (Get-Bonus) + [double]$cfg.BonusMin
+                ('{0};{1}' -f (Get-DayKey), [int]$new) | Out-File $bf -Encoding ascii
+                Close-All
+            } else {
+                $script:fails++
+                if ($script:fails -ge 5) {
+                    $script:blockedUntil = (Get-Date).AddMinutes(5); $script:fails = 0
+                    $script:info.Text = 'Zu viele Versuche. Eingabe 5 Minuten gesperrt.'
+                } else { $script:info.Text = 'Ungültiger Code.' }
+            }
+        })
+
+        $panel.Controls.Add($t); $panel.Controls.Add($box); $panel.Controls.Add($msg)
+        $script:pinCtrls = @($t, $box, $msg)
+        $f.Controls.Add($panel)
+        $script:pinBox = $box
+        $script:info = $msg
+        $script:primary = $f
+    }
+    $script:forms += $f
+}
+if (-not $script:primary) { $script:primary = $script:forms[0] }
+
+# ---- PIN-Feld ist unsichtbar; Leertaste + F12 + Alt blendet es fuer 30 s ein (Panel bleibt, Layout unveraendert) ----
+$script:pinShown = $false
+$script:pinShownAt = [datetime]::MinValue
+function Show-Pin([bool]$on) {
+    if (-not $script:pinBox) { return }
+    foreach ($c in $script:pinCtrls) { $c.Visible = $on }
+    $script:pinShown = $on
+    OLog "PIN-Feld sichtbar = $on"
+    if ($script:keysOk) { [KsKeys]::AllowShift = $on }
+    if ($on) { $script:pinShownAt = Get-Date; $script:pinBox.Focus() | Out-Null }
+    else { $script:pinBox.Text = ''; $script:info.Text = '' }
+}
+if ($script:keysOk) {
+    try {
+        if ([KsKeys]::Install()) {
+            [KsKeys]::Active = ($script:keyLock -and (-not $test -or (Test-Path (Join-Path $Dir 'keytest.flag'))))
+            OLog "Tastensperre: Hook installiert, aktiv = $([KsKeys]::Active)"
+        } else { $script:keysOk = $false; OLog 'Tastensperre: Hook fehlgeschlagen' }
+    } catch { $script:keysOk = $false; OLog "Tastensperre-Fehler: $_" }
+}
+# Ohne Tastatur-Hook kaeme man nie an das PIN-Feld: dann bleibt es sichtbar (Betreuer nicht aussperren)
+if ($script:keysOk) { Show-Pin $false } else { Show-Pin $true }
+
+$script:timer = New-Object Windows.Forms.Timer
+$script:timer.Interval = 500
+$script:timer.Add_Tick({
+    $script:tick++
+    foreach ($f in $script:forms) { $f.TopMost = $true }
+    if ($script:keysOk) {
+        if ([KsKeys]::PinRequested) { [KsKeys]::PinRequested = $false; Show-Pin $true }
+        elseif ($script:pinShown -and ((Get-Date) - $script:pinShownAt).TotalSeconds -gt 30) { Show-Pin $false }
+    }
+    try {
+        $script:lines = Get-LockLines
+        foreach ($c in $script:canvases) { $c.Invalidate() }
+    } catch { OLog "Textfehler: $_" }
+    if (-not $script:primary.ContainsFocus) { $script:primary.Activate(); if ($script:pinBox) { $script:pinBox.Focus() | Out-Null } }
+    if ($script:tick % 4 -eq 0) {
+        Set-Muted
+        if (-not $test -and -not (Test-StillLocked)) { Close-All; return }
+    }
+    if ($test) {
+        $el = ((Get-Date) - $script:start).TotalSeconds
+        if ($Shot -and -not $script:shotDone -and $el -ge 3) {
+            $script:shotDone = $true
+            try {
+                $b = $primaryScreen.Bounds
+                $bmp = New-Object Drawing.Bitmap($b.Width, $b.Height)
+                $g = [Drawing.Graphics]::FromImage($bmp)
+                $g.CopyFromScreen($b.Location, [Drawing.Point]::Empty, $b.Size)
+                $bmp.Save($Shot, [Drawing.Imaging.ImageFormat]::Png)
+                OLog "Screenshot gespeichert; Ton jetzt stumm = $(if ($script:muteOk) { [KsAudio]::GetMute() } else { 'n/a' })"
+            } catch { OLog "Screenshot-Fehler: $_" }
+        }
+        if ($el -ge $TestSeconds) { OLog 'Testzeit vorbei, schliesse'; Close-All }
+    }
+})
+
+foreach ($f in $script:forms) { $f.Show() }
+$script:primary.Activate()
+if ($script:pinBox) { $script:pinBox.Focus() | Out-Null }
+Set-Muted
+$script:timer.Start()
+[Windows.Forms.Application]::Run($script:primary)

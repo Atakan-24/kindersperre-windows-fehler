@@ -1,0 +1,856 @@
+﻿# Sperrbildschirm der Kindersperre: sieht aus wie ein Systemabsturz im Terminal (schwarz, monospace, rot/grau).
+# Wird von Sperre.ps1 als SYSTEM in der Benutzersitzung gestartet. Schliesst sich nur, wenn das Limit nicht mehr gilt
+# (neuer Tag / Bonus durch Betreuer-PIN). Im Testmodus (-TestSeconds) schliesst er sich nach der angegebenen Zeit.
+param([int]$TestSeconds = 0, [string]$Shot = '')
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$Dir  = 'C:\ProgramData\Kindersperre'
+$cfg  = Get-Content (Join-Path $Dir 'config.json') -Raw | ConvertFrom-Json
+$test = $TestSeconds -gt 0
+$script:allowClose = $false
+$script:wasMuted   = $false
+$script:muteOk     = $false
+$script:lastLocked = $true
+$script:fails      = 0
+$script:blockedUntil = [datetime]::MinValue
+$script:start      = Get-Date
+$script:shotDone   = $false
+$script:tick       = 0
+$script:errId      = ('{0:X4}-{1:X4}-{2:X4}' -f (Get-Random -Maximum 65535), (Get-Random -Maximum 65535), (Get-Random -Maximum 65535))
+
+function OLog($m) { if ($test) { ('{0}  {1}' -f (Get-Date -Format 'HH:mm:ss'), $m) | Out-File (Join-Path $Dir 'overlay.log') -Append -Encoding ascii } }
+
+# ---- Ton stumm schalten (Standard-Ausgabegeraet) ----
+try {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorComObject { }
+[ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDeviceEnumerator { int EnumAudioEndpoints(int flow, int mask, out IntPtr devs); int GetDefaultAudioEndpoint(int flow, int role, out IMMDevice dev); }
+[ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDevice { int Activate(ref Guid iid, int clsCtx, IntPtr p, [MarshalAs(UnmanagedType.IUnknown)] out object o); }
+[ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioEndpointVolume {
+    int RegisterControlChangeNotify(IntPtr p); int UnregisterControlChangeNotify(IntPtr p); int GetChannelCount(out uint c);
+    int SetMasterVolumeLevel(float l, ref Guid g); int SetMasterVolumeLevelScalar(float l, ref Guid g);
+    int GetMasterVolumeLevel(out float l); int GetMasterVolumeLevelScalar(out float l);
+    int SetChannelVolumeLevel(uint ch, float l, ref Guid g); int SetChannelVolumeLevelScalar(uint ch, float l, ref Guid g);
+    int GetChannelVolumeLevel(uint ch, out float l); int GetChannelVolumeLevelScalar(uint ch, out float l);
+    int SetMute([MarshalAs(UnmanagedType.Bool)] bool m, ref Guid g); int GetMute([MarshalAs(UnmanagedType.Bool)] out bool m);
+}
+public class KsAudio {
+    static IAudioEndpointVolume Vol() {
+        IMMDeviceEnumerator en = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
+        IMMDevice dev; en.GetDefaultAudioEndpoint(0, 1, out dev);
+        Guid iid = typeof(IAudioEndpointVolume).GUID; object o; dev.Activate(ref iid, 23, IntPtr.Zero, out o);
+        return (IAudioEndpointVolume)o;
+    }
+    public static bool GetMute() { bool m; Vol().GetMute(out m); return m; }
+    public static void SetMute(bool m) { Guid g = Guid.Empty; Vol().SetMute(m, ref g); }
+}
+'@
+    $script:wasMuted = [KsAudio]::GetMute()
+    $script:muteOk = $true
+    OLog "Audio: vorher stumm = $($script:wasMuted)"
+} catch { OLog "Audio-Fehler: $_" }
+
+# ---- Tastensperre + Tastenkombi fuer das versteckte PIN-Feld (Leertaste + F12 + Alt gleichzeitig) ----
+# Die Entscheidung "Taste blockieren?" steckt in KsKeys.Handle (ohne Hook testbar); Proc ruft nur Handle auf.
+$script:keysOk = $false
+try {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class KsKeys {
+    delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", SetLastError = true)] static extern IntPtr SetWindowsHookEx(int idHook, HookProc fn, IntPtr hMod, uint threadId);
+    [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr h);
+    [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr h, int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr GetModuleHandle(string name);
+    [DllImport("user32.dll", SetLastError = true)] static extern bool SystemParametersInfo(uint action, uint param, ref STICKYKEYS pv, uint winIni);
+    [StructLayout(LayoutKind.Sequential)] struct KBDLL { public uint vkCode, scanCode, flags, time; public IntPtr extra; }
+    [StructLayout(LayoutKind.Sequential)] struct STICKYKEYS { public uint cbSize, dwFlags; }
+
+    static HookProc proc; static IntPtr hook = IntPtr.Zero;
+    public static volatile bool Active;         // Tasten werden gesperrt
+    public static volatile bool AllowShift;     // Umschalt erlaubt, solange das PIN-Feld sichtbar ist (PIN darf Grossbuchstaben haben)
+    public static volatile bool PinRequested;   // Leertaste + F12 + Alt waren gleichzeitig gedrueckt
+    public static int Blocked, SeenAlt, SeenSpace, SeenF12;
+    static bool ctrlDown, altDown, spaceDown, f12Down;
+    static STICKYKEYS saved; static bool haveSaved;
+
+    public static void ResetState() { ctrlDown = altDown = spaceDown = f12Down = false; PinRequested = false; Blocked = 0; }
+
+    // true = Ereignis wird verschluckt
+    public static bool Handle(int vk, bool down, bool altFlag)
+    {
+        if (vk == 0x11 || vk == 0xA2 || vk == 0xA3) ctrlDown = down;
+        if (vk == 0x12 || vk == 0xA4 || vk == 0xA5) { altDown = down; if (down) SeenAlt++; }
+        if (vk == 0x20) { spaceDown = down; if (down) SeenSpace++; }
+        if (vk == 0x7B) { f12Down = down; if (down) SeenF12++; }
+        if (down && altDown && spaceDown && f12Down) PinRequested = true;
+        if (!Active) return false;
+        bool alt = altFlag || altDown;
+        if (vk == 0x5B || vk == 0x5C) return true;                                   // Windows-Taste links/rechts
+        if ((vk == 0x10 || vk == 0xA0 || vk == 0xA1) && !AllowShift) return true;    // Umschalt (auch 5x = Einrastfunktion)
+        if (alt && (vk == 0x09 || vk == 0x1B || vk == 0x73)) return true;            // Alt+Tab, Alt+Esc, Alt+F4
+        if (alt && vk == 0x20) return true;                                          // Alt+Leertaste (Fenstermenue)
+        if (ctrlDown && vk == 0x1B) return true;                                     // Strg+Esc (und Strg+Umschalt+Esc)
+        return false;
+    }
+
+    static IntPtr Proc(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        if (nCode >= 0)
+        {
+            try
+            {
+                KBDLL k = (KBDLL)Marshal.PtrToStructure(lParam, typeof(KBDLL));
+                int msg = wParam.ToInt32();
+                bool down = (msg == 0x100 || msg == 0x104);
+                if (Handle((int)k.vkCode, down, (k.flags & 0x20) != 0)) { Blocked++; return (IntPtr)1; }
+            }
+            catch { }
+        }
+        return CallNextHookEx(hook, nCode, wParam, lParam);
+    }
+
+    public static bool Install()
+    {
+        if (hook != IntPtr.Zero) return true;
+        proc = Proc;
+        hook = SetWindowsHookEx(13, proc, GetModuleHandle(null), 0);
+        DisableSticky();
+        return hook != IntPtr.Zero;
+    }
+
+    public static void Uninstall()
+    {
+        Active = false;
+        if (hook != IntPtr.Zero) { UnhookWindowsHookEx(hook); hook = IntPtr.Zero; }
+        RestoreSticky();
+    }
+
+    static void DisableSticky()
+    {
+        STICKYKEYS s = new STICKYKEYS(); s.cbSize = (uint)Marshal.SizeOf(typeof(STICKYKEYS));
+        if (SystemParametersInfo(0x3A, s.cbSize, ref s, 0))
+        {
+            saved = s; haveSaved = true;
+            STICKYKEYS n = s; n.dwFlags = n.dwFlags & ~0x4u;   // Umschalt-5x-Abfrage aus
+            SystemParametersInfo(0x3B, n.cbSize, ref n, 0);
+        }
+    }
+
+    static void RestoreSticky()
+    {
+        if (haveSaved) { STICKYKEYS s = saved; SystemParametersInfo(0x3B, s.cbSize, ref s, 0); haveSaved = false; }
+    }
+}
+'@
+    $script:keysOk = $true
+} catch { OLog "Tastensperre-Kompilierfehler: $_" }
+# Kill-Switch: in config.json "KeyLock": false schaltet nur das Blockieren ab (Tastenkombi fuer das PIN-Feld bleibt)
+$script:keyLock = ($cfg.KeyLock -ne $false)
+
+function Set-Muted {
+    if ($script:muteOk) { try { if (-not [KsAudio]::GetMute()) { [KsAudio]::SetMute($true) } } catch { } }
+}
+
+# ---- Zustand ----
+function Get-DayKey { (Get-Date).AddHours(-[double]$cfg.ResetHour).ToString('yyyy-MM-dd') }
+
+function Test-FreeDay {
+    # Tage ohne Limit laut config.json "FreeDays" (0 = Sonntag ... 6 = Samstag). Massgeblich ist der Tagesschluessel,
+    # d. h. ein freier Tag laeuft wie das Limit-Zaehlen von ResetHour bis ResetHour des Folgetags.
+    try {
+        $dow = [int][datetime]::ParseExact((Get-DayKey), 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture).DayOfWeek
+        return (@($cfg.FreeDays) -contains $dow)
+    } catch { return $false }
+}
+function Get-LimitMinForToday {
+    # Wochenend-/Wochentaglimit statt einem einzelnen LimitMin. 0=Sonntag,6=Samstag = Wochenende.
+    try {
+        $dow = [int][datetime]::ParseExact((Get-DayKey), 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture).DayOfWeek
+        if ($dow -eq 0 -or $dow -eq 6) { return [double]$cfg.WeekendLimitMin }
+        return [double]$cfg.WeekdayLimitMin
+    } catch { return [double]$cfg.WeekdayLimitMin }
+}
+function Get-Bonus {
+    $f = Join-Path $Dir 'bonus.txt'
+    if (Test-Path $f) { try { $p = (Get-Content $f -Raw).Trim().Split(';'); if ($p[0] -eq (Get-DayKey)) { return [double]$p[1] } } catch { } }
+    return 0.0
+}
+function Test-StillLocked {
+    try {
+        $s = Get-Content (Join-Path $Dir 'zeit.json') -Raw | ConvertFrom-Json
+        if ($s.date -ne (Get-DayKey)) { $script:lastLocked = $false }
+        elseif (Test-FreeDay) { $script:lastLocked = $false }
+        else { $script:lastLocked = ([double]$s.minutes -ge ((Get-LimitMinForToday) + (Get-Bonus) + [double]$cfg.GraceMin)) }
+    } catch { }   # Datei gerade in Bearbeitung: letzten Wert behalten
+    return $script:lastLocked
+}
+function Test-Pin([string]$pin) {
+    try {
+        $p = Get-Content (Join-Path $Dir 'pin.json') -Raw | ConvertFrom-Json
+        $salt = [Convert]::FromBase64String($p.salt)
+        $h = (New-Object Security.Cryptography.Rfc2898DeriveBytes($pin, $salt, 100000)).GetBytes(32)
+        return ([Convert]::ToBase64String($h) -eq $p.hash)
+    } catch { return $false }
+}
+
+# ---- Text im Stil eines Systemabsturzes (erfundener Grafiktreiber-Fehler) mit Live-Countdown ----
+$cRed  = [Drawing.Color]::FromArgb(255, 60, 60)
+$cGray = [Drawing.Color]::FromArgb(200, 200, 200)
+$cWhite = [Drawing.Color]::FromArgb(255, 255, 255)
+$cDim  = [Drawing.Color]::FromArgb(110, 110, 110)
+# Echte Daten dieses PCs (Grafikkarte/Treiber) machen den Fehlerbericht glaubwuerdig
+$script:gpuName = 'NVIDIA GeForce GTX 1060 6GB'; $script:gpuPci = 'PCI\VEN_10DE&DEV_1C03'; $script:drvShort = '552.44'; $script:drvFull = '31.0.15.5244'
+try {
+    $vc = Get-CimInstance Win32_VideoController | Where-Object { $_.Name -like '*NVIDIA*' } | Select-Object -First 1
+    if ($vc) {
+        $script:gpuName = $vc.Name
+        if ($vc.PNPDeviceID -match '(PCI\\VEN_[0-9A-F]{4}&DEV_[0-9A-F]{4})') { $script:gpuPci = $Matches[1] }
+        if ($vc.DriverVersion -match '^\d+\.\d+\.(\d+)\.(\d+)$') {
+            $d = ($Matches[1] + $Matches[2]); if ($d.Length -ge 5) { $d = $d.Substring($d.Length - 5) }
+            $script:drvShort = '{0}.{1}' -f $d.Substring(0, 3), $d.Substring(3); $script:drvFull = $vc.DriverVersion
+        }
+    }
+} catch { }
+function Get-Hex($n) { -join (1..$n | ForEach-Object { '{0:X}' -f (Get-Random -Maximum 16) }) }
+$script:p1 = 'FFFF' + (Get-Hex 12); $script:p2 = 'FFFFF80' + (Get-Hex 9); $script:base = 'FFFFF80' + (Get-Hex 9); $script:stamp = (Get-Hex 8).ToLower()
+$script:crashTime = Get-Date
+function Get-LockLines {
+    $now = Get-Date
+    $reset = $now.Date.AddHours([double]$cfg.ResetHour)
+    if ($now -ge $reset) { $reset = $reset.AddDays(1); $tag = 'morgen' } else { $tag = 'heute' }
+    $rem = $reset - $now
+    $cursor = if ($script:tick % 2 -eq 0) { '_' } else { ' ' }
+    $dot = { param($a, $b, $w) ($a + ' ').PadRight($w, '.') + ' ' + $b }
+    return @(
+        @{ T = ('*** STOP: 0x00000116 (0x{0}, 0x{1}, 0xFFFFFFFFC000009A, 0x0000000000000004)' -f $script:p1, $script:p2); C = $cRed },
+        @{ T = ('***  nvlddmkm.sys - Address {0} base at {1}, DateStamp {2}' -f $script:p2, $script:base, $script:stamp); C = $cGray },
+        @{ T = ''; C = $cGray },
+        @{ T = 'VIDEO_TDR_FAILURE'; C = $cGray },
+        @{ T = ''; C = $cGray },
+        @{ T = 'Der Grafiktreiber hat nicht innerhalb des zulässigen Zeitraums geantwortet (TDR-Timeout)'; C = $cGray },
+        @{ T = 'und konnte nicht zurückgesetzt werden.'; C = $cGray },
+        @{ T = ''; C = $cGray },
+        @{ T = (& $dot 'Gerät' $script:gpuName 12); C = $cGray },
+        @{ T = (& $dot 'PCI-ID' ($script:gpuPci) 12); C = $cGray },
+        @{ T = (& $dot 'Treiber' ('nvlddmkm.sys {0} ({1})' -f $script:drvShort, $script:drvFull) 12); C = $cGray },
+        @{ T = (& $dot 'Status' '0xC000009A STATUS_INSUFFICIENT_RESOURCES' 12); C = $cGray },
+        @{ T = (& $dot 'Zeitpunkt' $script:crashTime.ToString('yyyy-MM-dd HH:mm:ss') 12); C = $cGray },
+        @{ T = ''; C = $cGray },
+        @{ T = ('[ FEHLER ] ' + (& $dot 'Grafiksubsystem' 'ABGESTÜRZT' 40)); C = $cRed },
+        @{ T = ('[ FEHLER ] ' + (& $dot 'Treiber-Wiederherstellung' 'FEHLGESCHLAGEN' 40)); C = $cRed },
+        @{ T = ('[  OK   ] ' + (& $dot 'Speicherabbild gesichert' '100%' 40)); C = $cGray },
+        @{ T = ('[  OK   ] ' + (& $dot 'Schutzmodus' 'AKTIV' 40)); C = $cGray },
+        @{ T = ''; C = $cGray },
+        @{ T = ('> Verbleibende Zeit: {0:00}:{1:00}:{2:00} {3}' -f [int][Math]::Floor($rem.TotalHours), $rem.Minutes, $rem.Seconds, $cursor); C = $cWhite },
+        @{ T = ''; C = $cGray },
+        @{ T = 'Eingaben werden bis zur Wiederherstellung ignoriert.'; C = $cDim },
+        @{ T = ('Fehler-ID: {0}' -f $script:errId); C = $cDim }
+    )
+}
+$script:lines = Get-LockLines
+
+function Close-All {
+    $script:allowClose = $true
+    if ($script:keysOk) { try { OLog "Gesperrte Tastenereignisse: $([KsKeys]::Blocked); gesehen: Alt=$([KsKeys]::SeenAlt) Leertaste=$([KsKeys]::SeenSpace) F12=$([KsKeys]::SeenF12)"; [KsKeys]::Uninstall() } catch { } }
+    $script:timer.Stop()
+    if ($script:anim) { $script:anim.Stop(); if ($script:look -eq 'windows') { try { [Windows.Forms.Cursor]::Show() } catch { } } }
+    if ($script:muteOk -and -not $script:wasMuted) { try { [KsAudio]::SetMute($false); OLog 'Ton wiederhergestellt' } catch { } }
+    foreach ($f in $script:forms) { try { $f.Close() } catch { } }
+    [Windows.Forms.Application]::Exit()
+}
+
+# ---- Windows-Look: Bildfehler -> Schwarzbild -> Bluescreen -> Windows-Logo -> Reparatur ----
+# config.json (alles optional): "Look": "terminal" = alter Text-Look | "EndPhase": "logo" = am Ende nur Logo | "FileTicker": false = keine Dateizeile unten
+$script:look     = if ($cfg.Look -eq 'terminal') { 'terminal' } else { 'windows' }
+$script:endPhase = if ($cfg.EndPhase -eq 'logo') { 'logo' } else { 'repair' }
+$script:ticker   = ($cfg.FileTicker -ne $false)
+$script:fxOk       = $false
+$script:phase      = ''
+$script:pct        = 0
+$script:spin       = 0.0
+$script:speed      = 1.0
+$script:seqOffset  = 0.0
+$script:frameN     = 0
+$script:phaseShots = @{}
+$script:fonts      = @{}
+$script:qr         = @{}
+$script:logoImg    = $null
+$script:logoTried  = $false
+$script:tickerText = ''
+$script:nextTick   = [datetime]::MinValue
+$script:procAt     = [datetime]::MinValue
+$script:procList   = @()
+$script:drvList    = $null
+$script:drvI       = -1
+$script:tickN      = 0
+$script:tickBrush  = New-Object Drawing.SolidBrush([Drawing.Color]::FromArgb(78, 78, 78))
+# Texte der Reparatur-Phasen (deutsche Windows-10-Wortlaute aus dem Gedaechtnis, NICHT am PC geprueft - hier aenderbar)
+$script:txtRepair1 = 'Automatische Reparatur wird vorbereitet'
+$script:txtRepair2 = 'Diagnose des PCs wird ausgeführt'
+
+# Absturz-Ablauf nur einmal pro Sitzung und Tagesschluessel; danach (Neustart des Skripts) direkt Windows-Logo
+$script:playSeq = $true
+if (-not $test) {
+    try {
+        $mk = Join-Path $Dir ('crash-{0}.txt' -f [Diagnostics.Process]::GetCurrentProcess().SessionId)
+        if ((Test-Path $mk) -and ((Get-Content $mk -Raw).Trim() -eq (Get-DayKey))) { $script:playSeq = $false }
+        else { (Get-DayKey) | Out-File $mk -Encoding ascii }
+    } catch { }
+} elseif (Test-Path (Join-Path $Dir 'speed.txt')) {
+    try { $script:speed = [double](Get-Content (Join-Path $Dir 'speed.txt') -Raw).Trim() } catch { }   # Testmodus: Zeitraffer
+}
+# D = Dauer in Sekunden (0 = bleibt bis zum Schluss)
+$script:tl = @(
+    @{ N = 'glitch1'; D = 1.1 }, @{ N = 'black'; D = 1.8 }, @{ N = 'glitch2'; D = 1.0 }, @{ N = 'bsod'; D = 11.0 },
+    @{ N = 'logo'; D = $(if ($script:endPhase -eq 'logo') { 0 } else { 25 }) }
+)
+if ($script:endPhase -eq 'repair') { $script:tl += @(@{ N = 'repair1'; D = 40 }, @{ N = 'repair2'; D = 0 }) }
+if (-not $script:playSeq) { $script:seqOffset = 13.9 }   # = Summe der vier Absturz-Phasen
+
+# ---- Bildfehler-Effekt (aus dem Prototyp FehlerTest.cs) ----
+try {
+    Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
+using System;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
+public static class KsFx
+{
+    public static Bitmap FromInts(int[] a, int w, int h)
+    {
+        Bitmap b = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+        BitmapData d = b.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+        Marshal.Copy(a, 0, d.Scan0, a.Length);
+        b.UnlockBits(d);
+        return b;
+    }
+    public static int[] ToInts(Bitmap b)
+    {
+        int w = b.Width, h = b.Height;
+        BitmapData d = b.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        int[] a = new int[w * h];
+        Marshal.Copy(d.Scan0, a, 0, a.Length);
+        b.UnlockBits(d);
+        return a;
+    }
+    static int Wrap(int v, int w) { if (v < 0) v += w; else if (v >= w) v -= w; return v; }
+    static int Argb(int r, int g, int b) { return unchecked((int)0xFF000000) | (r << 16) | (g << 8) | b; }
+    static int C255(int v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }
+    static Rectangle Fit(Rectangle r, int W, int H) { r.Intersect(new Rectangle(0, 0, W, H)); return r; }
+
+    static void Band(int[] dp, int[] sp, int W, int y0, int h, int dx, int split)
+    {
+        int H = sp.Length / W;
+        for (int yy = y0; yy < y0 + h && yy < H; yy++)
+        {
+            int row = yy * W;
+            for (int x = 0; x < W; x++)
+            {
+                int xr = Wrap(x - dx - split, W), xg = Wrap(x - dx, W), xb = Wrap(x - dx + split, W);
+                dp[row + x] = Argb((sp[row + xr] >> 16) & 255, (sp[row + xg] >> 8) & 255, sp[row + xb] & 255);
+            }
+        }
+    }
+
+    static void Mosaic(int[] dp, int W, int H, Rectangle r0, int cell)
+    {
+        Rectangle r = Fit(r0, W, H);
+        if (cell < 2) cell = 2;
+        for (int cy = r.Y; cy < r.Bottom; cy += cell)
+            for (int cx = r.X; cx < r.Right; cx += cell)
+            {
+                int x1 = Math.Min(cx + cell, r.Right), y1 = Math.Min(cy + cell, r.Bottom);
+                long sr = 0, sg = 0, sb = 0; int n = 0;
+                for (int yy = cy; yy < y1; yy++) for (int xx = cx; xx < x1; xx++) { int p = dp[yy * W + xx]; sr += (p >> 16) & 255; sg += (p >> 8) & 255; sb += p & 255; n++; }
+                if (n == 0) continue;
+                int col = Argb((int)(sr / n), (int)(sg / n), (int)(sb / n));
+                for (int yy = cy; yy < y1; yy++) for (int xx = cx; xx < x1; xx++) dp[yy * W + xx] = col;
+            }
+    }
+
+    static void Noise(int[] dp, int W, int H, Rectangle r0, int cell, Random rnd)
+    {
+        Rectangle r = Fit(r0, W, H);
+        if (cell < 1) cell = 1;
+        for (int cy = r.Y; cy < r.Bottom; cy += cell)
+            for (int cx = r.X; cx < r.Right; cx += cell)
+            {
+                int col = Argb(rnd.Next(256), rnd.Next(256), rnd.Next(256));
+                for (int yy = cy; yy < Math.Min(cy + cell, r.Bottom); yy++)
+                    for (int xx = cx; xx < Math.Min(cx + cell, r.Right); xx++) dp[yy * W + xx] = col;
+            }
+    }
+
+    static void CopyBlock(int[] dp, int[] sp, int W, int H, Rectangle dst, int sx, int sy, int mode)
+    {
+        Rectangle d = Fit(dst, W, H);
+        for (int yy = d.Y; yy < d.Bottom; yy++)
+            for (int xx = d.X; xx < d.Right; xx++)
+            {
+                int px = Math.Max(0, Math.Min(W - 1, xx - dst.X + sx)), py = Math.Max(0, Math.Min(H - 1, yy - dst.Y + sy));
+                int p = sp[py * W + px]; int R = (p >> 16) & 255, G = (p >> 8) & 255, B = p & 255;
+                if (mode == 1) { int t = R; R = B; B = t; }
+                else if (mode == 2) { R = 255 - R; G = 255 - G; B = 255 - B; }
+                else if (mode == 3) { G = G / 3; R = C255(R * 3 / 2); B = C255(B * 3 / 2); }
+                dp[yy * W + xx] = Argb(R, G, B);
+            }
+    }
+
+    static void VLine(int[] dp, int W, int H, int x, int y, int h, int w, Random rnd)
+    {
+        int col = rnd.Next(2) == 0 ? Argb(255, 0, 255) : Argb(0, 255, 70);
+        for (int yy = y; yy < Math.Min(H, y + h); yy++)
+            for (int xx = x; xx < Math.Min(W, x + w); xx++) dp[yy * W + xx] = col;
+    }
+
+    static void Tint(int[] dp, int W, int H, int y0, int h, int mode)
+    {
+        for (int yy = Math.Max(0, y0); yy < Math.Min(H, y0 + h); yy++)
+            for (int x = 0; x < W; x++)
+            {
+                int p = dp[yy * W + x]; int R = (p >> 16) & 255, G = (p >> 8) & 255, B = p & 255;
+                if (mode == 0) { R = C255(R * 7 / 5); G = G / 2; B = C255(B * 13 / 10); }
+                else if (mode == 1) { R = R / 2; G = C255(G * 7 / 5); B = B * 3 / 5; }
+                else { R = R / 4; G = G / 4; B = B / 4; }
+                dp[yy * W + x] = Argb(R, G, B);
+            }
+    }
+
+    public static Bitmap MakeGlitch(int[] sp, int W, int H, int seed, int level)
+    {
+        Random r = new Random(seed);
+        double k = W / 1280.0, hk = H / 720.0;
+        int[] dp = (int[])sp.Clone();
+        int nb = level == 1 ? 3 + r.Next(3) : 9 + r.Next(6);
+        for (int i = 0; i < nb; i++)
+        {
+            int h = (int)((6 + r.Next(level == 1 ? 34 : 70)) * hk);
+            int y0 = r.Next(Math.Max(1, H - h));
+            int dx = (int)((r.NextDouble() - 0.5) * (level == 1 ? 90 : 420) * k);
+            int split = (int)((level == 1 ? 2 : 4 + r.Next(8)) * k);
+            Band(dp, sp, W, y0, h, dx, split);
+        }
+        if (level == 1)
+        {
+            int n = 3 + r.Next(3);
+            for (int i = 0; i < n; i++)
+            {
+                Rectangle rc = new Rectangle(r.Next(W), r.Next(H), (int)((24 + r.Next(120)) * k), (int)((10 + r.Next(50)) * hk));
+                int m = r.Next(3);
+                if (m == 0) Mosaic(dp, W, H, rc, (int)Math.Max(4, (6 + r.Next(10)) * k));
+                else if (m == 1) Noise(dp, W, H, rc, (int)Math.Max(1, 2 * k), r);
+                else CopyBlock(dp, sp, W, H, rc, r.Next(W), r.Next(H), r.Next(1, 4));
+            }
+            int nl = 2 + r.Next(3);
+            for (int i = 0; i < nl; i++) VLine(dp, W, H, r.Next(W), r.Next(H), (int)((30 + r.Next(160)) * hk), (int)Math.Max(1, 2 * k), r);
+        }
+        else
+        {
+            int a = 3 + r.Next(3);
+            for (int i = 0; i < a; i++) Mosaic(dp, W, H, new Rectangle(r.Next(W), r.Next(H), (int)((200 + r.Next(500)) * k), (int)((80 + r.Next(220)) * hk)), (int)((10 + r.Next(24)) * k));
+            int b = 6 + r.Next(6);
+            for (int i = 0; i < b; i++) Noise(dp, W, H, new Rectangle(r.Next(W), r.Next(H), (int)((40 + r.Next(240)) * k), (int)((12 + r.Next(80)) * hk)), (int)Math.Max(1, (2 + r.Next(3)) * k), r);
+            int c = 6 + r.Next(6);
+            for (int i = 0; i < c; i++) CopyBlock(dp, sp, W, H, new Rectangle(r.Next(W), r.Next(H), (int)((60 + r.Next(300)) * k), (int)((20 + r.Next(100)) * hk)), r.Next(W), r.Next(H), r.Next(0, 4));
+            for (int i = 0; i < 2; i++)
+            {
+                int y0 = r.Next(Math.Max(1, H - 120)); int rows = (int)((30 + r.Next(90)) * hk);
+                for (int yy = y0 + 1; yy < Math.Min(H, y0 + rows); yy++) Array.Copy(dp, y0 * W, dp, yy * W, W);
+            }
+            for (int i = 0; i < 3; i++) Tint(dp, W, H, r.Next(Math.Max(1, H - 60)), (int)((30 + r.Next(90)) * hk), r.Next(3));
+            for (int i = 0; i < 3; i++)
+            {
+                int x0 = r.Next(Math.Max(1, W - 60)), y0 = r.Next(Math.Max(1, H - 200)), w = (int)((40 + r.Next(220)) * k), h = (int)((60 + r.Next(300)) * hk);
+                for (int yy = y0; yy < Math.Min(H, y0 + h); yy++) { int col = dp[yy * W + x0]; for (int xx = x0; xx < Math.Min(W, x0 + w); xx++) dp[yy * W + xx] = col; }
+            }
+        }
+        return FromInts(dp, W, H);
+    }
+}
+'@
+    $script:fxOk = $true
+} catch { OLog "Bildfehler-Kompilierfehler: $_" }
+
+function Capture-Desk($b) {
+    $bmp = New-Object Drawing.Bitmap($b.Width, $b.Height)
+    $g = [Drawing.Graphics]::FromImage($bmp)
+    try { $g.CopyFromScreen($b.Location, [Drawing.Point]::Empty, $b.Size) } finally { $g.Dispose() }
+    try { return , ([KsFx]::ToInts($bmp)) } finally { $bmp.Dispose() }
+}
+
+function Get-Fnt([double]$px, [string]$fam = 'Segoe UI') {
+    $k = '{0}|{1}' -f $fam, [int]($px * 10)
+    if (-not $script:fonts.ContainsKey($k)) {
+        $script:fonts[$k] = New-Object Drawing.Font($fam, [single]$px, [Drawing.FontStyle]::Regular, [Drawing.GraphicsUnit]::Pixel)
+    }
+    return $script:fonts[$k]
+}
+
+# QR-Code-Attrappe (wie im Prototyp: zufaelliges Muster mit drei Eckmarken), einmal je Groesse gezeichnet
+function Get-Qr([double]$cell) {
+    $k = [int]($cell * 10)
+    if (-not $script:qr.ContainsKey($k)) {
+        $n = 25; $c = [single]$cell
+        $size = [int][Math]::Ceiling(($n + 2) * $c)
+        $bmp = New-Object Drawing.Bitmap($size, $size)
+        $g = [Drawing.Graphics]::FromImage($bmp)
+        $g.Clear([Drawing.Color]::White)
+        $rnd = New-Object Random(7)
+        for ($yy = 0; $yy -lt $n; $yy++) {
+            for ($xx = 0; $xx -lt $n; $xx++) {
+                $fin = ($xx -lt 8 -and $yy -lt 8) -or ($xx -gt $n - 9 -and $yy -lt 8) -or ($xx -lt 8 -and $yy -gt $n - 9)
+                if (-not $fin -and $rnd.NextDouble() -lt 0.5) { $g.FillRectangle([Drawing.Brushes]::Black, [single]($c + $xx * $c), [single]($c + $yy * $c), $c, $c) }
+            }
+        }
+        foreach ($p in @(@(0, 0), @(($n - 7), 0), @(0, ($n - 7)))) {
+            $fx = [single]($c + $p[0] * $c); $fy = [single]($c + $p[1] * $c)
+            $g.FillRectangle([Drawing.Brushes]::Black, $fx, $fy, [single](7 * $c), [single](7 * $c))
+            $g.FillRectangle([Drawing.Brushes]::White, [single]($fx + $c), [single]($fy + $c), [single](5 * $c), [single](5 * $c))
+            $g.FillRectangle([Drawing.Brushes]::Black, [single]($fx + 2 * $c), [single]($fy + 2 * $c), [single](3 * $c), [single](3 * $c))
+        }
+        $g.Dispose()
+        $script:qr[$k] = $bmp
+    }
+    return $script:qr[$k]
+}
+
+function Draw-Bsod($g, $w, $h, $sc) {
+    $g.Clear([Drawing.Color]::FromArgb(0, 120, 215))
+    $white = [Drawing.Brushes]::White
+    $x0 = $w * 0.128
+    $g.DrawString(':(', (Get-Fnt (200 * $sc)), $white, [single]($x0 - 14 * $sc), [single](60 * $sc))
+    $t1 = 'Auf dem Gerät ist ein Problem aufgetreten. Er muss neu gestartet werden. Es werden einige Fehlerinformationen gesammelt, und dann wird ein Neustart ausgeführt.'
+    $g.DrawString($t1, (Get-Fnt (34 * $sc)), $white, (New-Object Drawing.RectangleF([single]$x0, [single](400 * $sc), [single]($w * 0.58), [single](190 * $sc))))
+    $g.DrawString(('{0}% abgeschlossen' -f $script:pct), (Get-Fnt (34 * $sc)), $white, [single]$x0, [single](585 * $sc))
+    $g.DrawImageUnscaled((Get-Qr (5 * $sc)), [int]($x0 - 5 * $sc), [int](685 * $sc))
+    $lines = @('Weitere Informationen zu diesem Problem und mögliche Lösungen finden Sie unter', 'https://www.windows.com/stopcode', '',
+               'Halten Sie folgende Infos bereit, wenn Sie den Support anrufen:', 'Stillstandcode: VIDEO_TDR_FAILURE', 'Fehlerursache: nvlddmkm.sys')
+    $fs = Get-Fnt (17 * $sc)
+    for ($i = 0; $i -lt $lines.Count; $i++) { $g.DrawString($lines[$i], $fs, $white, [single]($x0 + 150 * $sc), [single](690 * $sc + $i * 24 * $sc)) }
+}
+
+function Draw-Logo($g, [double]$cx, [double]$top, [double]$size) {
+    if (-not $script:logoTried) {
+        $script:logoTried = $true
+        try { $script:logoImg = New-Object Drawing.Bitmap((Join-Path $Dir 'assets\winlogo.png')) } catch { OLog "Logo nicht geladen: $_" }
+    }
+    if ($script:logoImg) {
+        $lw = $size * 0.98; $lh = $lw * $script:logoImg.Height / $script:logoImg.Width
+        $g.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $g.DrawImage($script:logoImg, [single]($cx - $lw / 2), [single]$top, [single]$lw, [single]$lh)
+    } else {
+        $q = $size * 0.46; $gap = $size * 0.04
+        foreach ($p in @(@(0, 0), @(1, 0), @(0, 1), @(1, 1))) {
+            $g.FillRectangle([Drawing.Brushes]::White, [single]($cx - $q - $gap / 2 + $p[0] * ($q + $gap)), [single]($top + $p[1] * ($q + $gap)), [single]$q, [single]$q)
+        }
+    }
+}
+
+# Ladekreis: fuenf Punkte, oben eng beieinander, unten auseinandergezogen (wie im Prototyp)
+function Draw-Spinner($g, [double]$sx, [double]$sy, [double]$sr, [double]$sc) {
+    $rad = 4.4 * $sc
+    for ($i = 0; $i -lt 5; $i++) {
+        $x = ($script:spin * 0.42 - $i * 0.075) % 1.0; if ($x -lt 0) { $x += 1.0 }
+        $e = (1.0 - [Math]::Cos([Math]::PI * $x)) / 2.0
+        $a = $e * 2.0 * [Math]::PI - [Math]::PI / 2.0
+        $g.FillEllipse([Drawing.Brushes]::White, [single]($sx + [Math]::Cos($a) * $sr - $rad), [single]($sy + [Math]::Sin($a) * $sr - $rad), [single]($rad * 2), [single]($rad * 2))
+    }
+}
+
+function Paint-Windows($g, $cv) {
+    $w = $cv.ClientSize.Width; $h = $cv.ClientSize.Height
+    $sc = $h / 1080.0
+    $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+    $ph = $script:phase
+    if ($ph -eq 'glitch1' -or $ph -eq 'glitch2') {
+        if ($cv.Tag.Frame) { $g.DrawImageUnscaled($cv.Tag.Frame, 0, 0) } else { $g.Clear([Drawing.Color]::Black) }
+        return
+    }
+    if ($ph -eq 'bsod') { Draw-Bsod $g $w $h $sc; return }
+    $g.Clear([Drawing.Color]::Black)
+    if ($ph -eq 'black' -or $ph -eq '') { return }
+    $cx = $w / 2.0; $cy = $h / 2.0
+    if ($ph -eq 'logo') {
+        Draw-Logo $g $cx ($cy - 210 * $sc) (150 * $sc)
+        Draw-Spinner $g $cx ($cy + 150 * $sc) (24 * $sc) $sc
+    } else {
+        $fmt = New-Object Drawing.StringFormat
+        $fmt.Alignment = [Drawing.StringAlignment]::Center
+        $txt = if ($ph -eq 'repair1') { $script:txtRepair1 } else { $script:txtRepair2 }
+        Draw-Spinner $g $cx ($cy - 40 * $sc) (24 * $sc) $sc
+        $g.DrawString($txt, (Get-Fnt (38 * $sc) 'Segoe UI Light'), [Drawing.Brushes]::White, (New-Object Drawing.RectangleF(0, [single]($cy + 20 * $sc), [single]$w, [single](80 * $sc))), $fmt)
+        $fmt.Dispose()
+    }
+    if ($script:ticker -and $script:tickerText) {
+        $g.DrawString($script:tickerText, (Get-Fnt (13 * $sc) 'Consolas'), $script:tickBrush, [single](24 * $sc), [single]($h - 30 * $sc))
+    }
+}
+
+# Unauffaellige Zeile unten links: echte Treiberdateien und laufende Programme dieses PCs
+function Update-Ticker {
+    if ($null -eq $script:drvList) {
+        try { $script:drvList = @(Get-ChildItem 'C:\Windows\System32\drivers' -Filter *.sys -Name -ErrorAction Stop) } catch { $script:drvList = @() }
+        if ($script:drvList.Count) { $script:drvI = Get-Random -Maximum $script:drvList.Count }
+    }
+    if (((Get-Date) - $script:procAt).TotalSeconds -gt 30) {
+        $script:procAt = Get-Date
+        try { $script:procList = @(Get-Process | Where-Object { $_.SessionId -ne 0 } | Select-Object -ExpandProperty ProcessName -Unique) } catch { }
+    }
+    $script:tickN++
+    if ($script:tickN % 3 -eq 0 -and $script:procList.Count) {
+        $script:tickerText = 'Aktiver Prozess  ' + $script:procList[(Get-Random -Maximum $script:procList.Count)] + '.exe'
+    } elseif ($script:drvList.Count) {
+        $script:drvI = ($script:drvI + 1) % $script:drvList.Count
+        $script:tickerText = 'Prüfe Datei  C:\Windows\System32\drivers\' + $script:drvList[$script:drvI]
+    }
+}
+
+# ---- Fenster auf allen Monitoren ----
+$script:forms = @()
+$script:canvases = @()
+$script:pinBox = $null
+$script:info = $null
+$primaryScreen = [Windows.Forms.Screen]::PrimaryScreen
+$script:brushes = @{}
+
+foreach ($scr in [Windows.Forms.Screen]::AllScreens) {
+    $f = New-Object Windows.Forms.Form
+    $f.FormBorderStyle = 'None'
+    $f.StartPosition = 'Manual'
+    $f.Bounds = $scr.Bounds
+    $f.BackColor = [Drawing.Color]::Black
+    $f.TopMost = $true
+    $f.ShowInTaskbar = $false
+    $f.ControlBox = $false
+    $f.Add_FormClosing({ param($s, $e) if (-not $script:allowClose) { $e.Cancel = $true } })
+
+    # Zeichenflaeche (eigenes Zeichnen, damit der Countdown ohne Flackern aktualisiert wird)
+    $cv = New-Object Windows.Forms.Panel
+    $cv.Dock = 'Fill'
+    $cv.BackColor = [Drawing.Color]::Black
+    $cv.GetType().GetProperty('DoubleBuffered', [Reflection.BindingFlags]'Instance,NonPublic').SetValue($cv, $true, $null)
+    # Schriftgroesse so waehlen, dass der laengste Text und alle Zeilen auf den Monitor passen
+    $maxC = ($script:lines | ForEach-Object { $_.T.Length } | Measure-Object -Maximum).Maximum
+    $fs = [Math]::Max(9, [Math]::Min([int]($scr.Bounds.Width / ($maxC * 0.80)), [int]($scr.Bounds.Height * 0.78 / ($script:lines.Count * 1.79))))
+    $cv.Tag = @{ Font = (New-Object Drawing.Font('Consolas', $fs, [Drawing.FontStyle]::Regular)); FontB = (New-Object Drawing.Font('Consolas', $fs, [Drawing.FontStyle]::Bold)) }
+    $cv.Tag.W = $scr.Bounds.Width; $cv.Tag.H = $scr.Bounds.Height; $cv.Tag.Desk = $null; $cv.Tag.Frame = $null
+    if ($script:look -eq 'windows' -and $script:fxOk -and $script:playSeq) { try { $cv.Tag.Desk = Capture-Desk $scr.Bounds } catch { OLog "Desktop-Abbild: $_" } }
+    $cv.Add_Paint({
+        param($s, $e)
+        $g = $e.Graphics
+        if ($script:look -eq 'windows') { Paint-Windows $g $s; return }
+        $g.TextRenderingHint = [Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+        $font = $s.Tag.Font; $fontB = $s.Tag.FontB
+        $fmt = [Drawing.StringFormat]::GenericTypographic
+        $charW = $g.MeasureString('WWWWWWWWWW', $font, 10000, $fmt).Width / 10
+        $lineH = $font.GetHeight($g) * 1.15
+        $lines = $script:lines
+        $maxChars = ($lines | ForEach-Object { $_.T.Length } | Measure-Object -Maximum).Maximum
+        $x = [Math]::Max(30, ($s.ClientSize.Width - $maxChars * $charW) / 2)
+        $y = [Math]::Max(20, ($s.ClientSize.Height - $lines.Count * $lineH) / 2)
+        foreach ($ln in $lines) {
+            $key = [string]$ln.C.ToArgb()
+            if (-not $script:brushes.ContainsKey($key)) { $script:brushes[$key] = New-Object Drawing.SolidBrush $ln.C }
+            $ft = if ($ln.C -eq $cRed -and $ln.T.StartsWith('***')) { $fontB } else { $font }
+            $g.DrawString($ln.T, $ft, $script:brushes[$key], $x, $y, $fmt)
+            $y += $lineH
+        }
+    })
+    $f.Controls.Add($cv)
+    $script:canvases += $cv
+
+    if ($scr.Primary) {
+
+        $t = New-Object Windows.Forms.Label
+        $t.Text = 'Wartungscode:'
+        $t.ForeColor = [Drawing.Color]::FromArgb(150, 150, 150)
+        $t.BackColor = [Drawing.Color]::Black
+        $t.AutoSize = $true
+        $t.Font = New-Object Drawing.Font('Consolas', 11)
+        $t.Location = New-Object Drawing.Point(([int]($scr.Bounds.Width / 2) - 170), ($scr.Bounds.Height - 70))
+
+        $box = New-Object Windows.Forms.TextBox
+        $box.UseSystemPasswordChar = $true
+        $box.Width = 140
+        $box.Font = New-Object Drawing.Font('Consolas', 12)
+        $box.BackColor = [Drawing.Color]::FromArgb(18, 18, 18)
+        $box.ForeColor = [Drawing.Color]::FromArgb(150, 150, 150)
+        $box.BorderStyle = 'FixedSingle'
+        $box.Location = New-Object Drawing.Point(([int]($scr.Bounds.Width / 2) - 40), ($scr.Bounds.Height - 74))
+
+        $msg = New-Object Windows.Forms.Label
+        $msg.Text = ''
+        $msg.ForeColor = [Drawing.Color]::FromArgb(170, 170, 170)
+        $msg.BackColor = [Drawing.Color]::Black
+        $msg.AutoSize = $true
+        $msg.Font = New-Object Drawing.Font('Consolas', 10)
+        $msg.Location = New-Object Drawing.Point(([int]($scr.Bounds.Width / 2) - 170), ($scr.Bounds.Height - 34))
+
+        $box.Add_KeyDown({
+            param($s, $e)
+            $script:pinShownAt = Get-Date
+            if ($e.KeyCode -ne 'Return') { return }
+            $e.SuppressKeyPress = $true
+            $pin = $script:pinBox.Text
+            $script:pinBox.Text = ''
+            if ((Get-Date) -lt $script:blockedUntil) { return }
+            if (Test-Pin $pin) {
+                $bf = Join-Path $Dir 'bonus.txt'
+                $new = (Get-Bonus) + [double]$cfg.BonusMin
+                if ($test) { OLog 'Test: PIN korrekt, Bonus nicht gebucht' } else { ('{0};{1}' -f (Get-DayKey), [int]$new) | Out-File $bf -Encoding ascii }
+                Close-All
+            } else {
+                $script:fails++
+                OLog 'PIN falsch'
+                if ($script:fails -ge 5) {
+                    $script:blockedUntil = (Get-Date).AddMinutes(5); $script:fails = 0
+                    $script:info.Text = 'Zu viele Versuche. Eingabe 5 Minuten gesperrt.'
+                } else { $script:info.Text = 'Ungültiger Code.' }
+            }
+        })
+
+        $cv.Controls.Add($t); $cv.Controls.Add($box); $cv.Controls.Add($msg)
+        $script:pinCtrls = @($t, $box, $msg)
+        $script:pinBox = $box
+        $script:info = $msg
+        $script:primary = $f
+    }
+    $script:forms += $f
+}
+if (-not $script:primary) { $script:primary = $script:forms[0] }
+
+# ---- PIN-Feld ist unsichtbar; Leertaste + F12 + Alt blendet es fuer 30 s ein (Panel bleibt, Layout unveraendert) ----
+$script:pinShown = $false
+$script:pinShownAt = [datetime]::MinValue
+function Show-Pin([bool]$on) {
+    if (-not $script:pinBox) { return }
+    foreach ($c in $script:pinCtrls) { $c.Visible = $on }
+    $script:pinShown = $on
+    OLog "PIN-Feld sichtbar = $on"
+    if ($script:keysOk) { [KsKeys]::AllowShift = $on }
+    if ($on) { $script:pinShownAt = Get-Date; $script:pinBox.Focus() | Out-Null }
+    else { $script:pinBox.Text = ''; $script:info.Text = '' }
+}
+if ($script:keysOk) {
+    try {
+        if ([KsKeys]::Install()) {
+            [KsKeys]::Active = ($script:keyLock -and (-not $test -or (Test-Path (Join-Path $Dir 'keytest.flag'))))
+            OLog "Tastensperre: Hook installiert, aktiv = $([KsKeys]::Active)"
+        } else { $script:keysOk = $false; OLog 'Tastensperre: Hook fehlgeschlagen' }
+    } catch { $script:keysOk = $false; OLog "Tastensperre-Fehler: $_" }
+}
+# Ohne Tastatur-Hook kaeme man nie an das PIN-Feld: dann bleibt es sichtbar (Betreuer nicht aussperren)
+if ($script:keysOk) { Show-Pin $false } else { Show-Pin $true }
+
+# ---- Ablaufsteuerung des Windows-Looks (eigener schneller Timer, 50 ms) ----
+function Update-Frames([int]$level) {
+    foreach ($c in $script:canvases) {
+        $t = $c.Tag
+        if ($t.Desk) {
+            $old = $t.Frame
+            $t.Frame = [KsFx]::MakeGlitch($t.Desk, $t.W, $t.H, (100 * $level + $script:frameN), $level)
+            if ($old) { $old.Dispose() }
+        }
+    }
+}
+
+function Step-Sequence {
+    $el = ((Get-Date) - $script:seqT0).TotalSeconds * $script:speed + $script:seqOffset
+    $acc = 0.0; $ph = $script:tl[$script:tl.Count - 1]; $pt = 0.0
+    foreach ($p in $script:tl) {
+        if ($p.D -eq 0 -or $el -lt ($acc + $p.D)) { $ph = $p; $pt = $el - $acc; break }
+        $acc += $p.D
+    }
+    $redraw = $false
+    if ($ph.N -ne $script:phase) { $script:phase = $ph.N; $redraw = $true; OLog "Phase: $($ph.N)" }
+    $script:spin = $el
+    switch ($ph.N) {
+        'glitch1' { $script:frameN++; Update-Frames 1; $redraw = $true }
+        'glitch2' { $script:frameN++; Update-Frames 2; $redraw = $true }
+        'bsod'    { $p2 = [Math]::Min(100, [int]([Math]::Floor($pt / 0.5) * 5)); if ($p2 -ne $script:pct) { $script:pct = $p2; $redraw = $true } }
+        'black'   { }
+        default   { $redraw = $true }
+    }
+    if ($script:ticker -and ($ph.N -eq 'logo' -or $ph.N -eq 'repair1' -or $ph.N -eq 'repair2') -and (Get-Date) -ge $script:nextTick) {
+        $script:nextTick = (Get-Date).AddMilliseconds(700)
+        Update-Ticker
+    }
+    if ($redraw) { foreach ($c in $script:canvases) { $c.Invalidate() } }
+    # Testmodus mit -Shot: je Phase ein Bild (Name = <Shot>-<Phase>.png)
+    if ($test -and $Shot -and -not $script:phaseShots.ContainsKey($ph.N)) {
+        $need = [Math]::Min(1.5, $(if ($ph.D -gt 0) { 0.6 * $ph.D } else { 1.5 }))
+        if ($pt -ge $need) {
+            $script:phaseShots[$ph.N] = $true
+            try {
+                $b = $primaryScreen.Bounds
+                $bmp = New-Object Drawing.Bitmap($b.Width, $b.Height)
+                $g = [Drawing.Graphics]::FromImage($bmp)
+                $g.CopyFromScreen($b.Location, [Drawing.Point]::Empty, $b.Size)
+                $bmp.Save(([IO.Path]::ChangeExtension($Shot, $null).TrimEnd('.') + '-' + $ph.N + '.png'), [Drawing.Imaging.ImageFormat]::Png)
+                $g.Dispose(); $bmp.Dispose()
+                OLog "Screenshot Phase $($ph.N)"
+            } catch { OLog "Screenshot-Fehler: $_" }
+        }
+    }
+}
+
+$script:anim = New-Object Windows.Forms.Timer
+$script:anim.Interval = 50
+$script:anim.Add_Tick({ try { Step-Sequence } catch { OLog "Ablauffehler: $_" } })
+
+$script:timer = New-Object Windows.Forms.Timer
+$script:timer.Interval = 500
+$script:timer.Add_Tick({
+    $script:tick++
+    foreach ($f in $script:forms) { $f.TopMost = $true }
+    if ($script:keysOk) {
+        if ([KsKeys]::PinRequested) { [KsKeys]::PinRequested = $false; Show-Pin $true }
+        elseif ($script:pinShown -and ((Get-Date) - $script:pinShownAt).TotalSeconds -gt 30) { Show-Pin $false }
+    }
+    try {
+        $script:lines = Get-LockLines
+        foreach ($c in $script:canvases) { $c.Invalidate() }
+    } catch { OLog "Textfehler: $_" }
+    if (-not $script:primary.ContainsFocus) { $script:primary.Activate(); if ($script:pinBox) { $script:pinBox.Focus() | Out-Null } }
+    if ($script:tick % 4 -eq 0) {
+        Set-Muted
+        if (-not $test -and -not (Test-StillLocked)) { Close-All; return }
+    }
+    if ($test) {
+        $el = ((Get-Date) - $script:start).TotalSeconds
+        if ($Shot -and -not $script:shotDone -and $el -ge 3) {
+            $script:shotDone = $true
+            try {
+                $b = $primaryScreen.Bounds
+                $bmp = New-Object Drawing.Bitmap($b.Width, $b.Height)
+                $g = [Drawing.Graphics]::FromImage($bmp)
+                $g.CopyFromScreen($b.Location, [Drawing.Point]::Empty, $b.Size)
+                $bmp.Save($Shot, [Drawing.Imaging.ImageFormat]::Png)
+                OLog "Screenshot gespeichert; Ton jetzt stumm = $(if ($script:muteOk) { [KsAudio]::GetMute() } else { 'n/a' })"
+            } catch { OLog "Screenshot-Fehler: $_" }
+        }
+        if ($el -ge $TestSeconds) { OLog 'Testzeit vorbei, schliesse'; Close-All }
+    }
+})
+
+foreach ($f in $script:forms) { $f.Show() }
+$script:primary.Activate()
+if ($script:pinBox) { $script:pinBox.Focus() | Out-Null }
+Set-Muted
+$script:timer.Start()
+if ($script:look -eq 'windows') {
+    try { [Windows.Forms.Cursor]::Hide() } catch { }
+    $script:seqT0 = Get-Date
+    $script:anim.Start()
+}
+[Windows.Forms.Application]::Run($script:primary)
