@@ -3,6 +3,8 @@
 Eigene Bildschirmzeit-Kindersicherung fuer den Familien-PC `cenks-pc`, gebaut mit Claude Code.
 Dieses Repository ist **privat** und dient nur als Sicherung fuer den Besitzer/Administrator (Konto Verwalter).
 
+**[English version: README.en.md](README.en.md)**
+
 ## Funktionsweise
 
 - `Sperre.ps1` laeuft als geplante SYSTEM-Aufgabe jede Minute, zaehlt die Bildschirmzeit PC-weit
@@ -20,6 +22,19 @@ Dieses Repository ist **privat** und dient nur als Sicherung fuer den Besitzer/A
   Testen der Sperre (Testlaeufe ohne Beeinflussung des echten Zaehlers).
 - `Claude-Start.ps1` / `Claude-Autostart-einrichten.ps1`: Autostart der steuernden Claude-Code-Sitzung
   beim Hochfahren des PCs.
+
+## Screenshots
+
+Aus Testlaeufen (Zerotest), nicht vom echten Betrieb.
+
+![Sperr-Ansicht mit Betreuer-PIN-Feld](shot.png)
+*Einfache Sperr-Ansicht mit versteckbarem Betreuer-PIN-Feld unten rechts.*
+
+![Bluescreen-Ansicht](shot5.png)
+*An einen echten Windows-Absturz angelehnte Bluescreen-Ansicht, mit echten Angaben zur verbauten Grafikkarte.*
+
+![Terminal-Ansicht mit Countdown](shot3.png)
+*Fruehe Fassung der Terminal-Ansicht (spaeter durch einen Wiederherstellungsversuchs-Zaehler auf einer echten Zeitachse ersetzt).*
 
 ## Konfiguration
 
