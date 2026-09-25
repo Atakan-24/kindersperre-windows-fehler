@@ -5,7 +5,6 @@
 param(
     [switch]$Diag,
     [switch]$TestOverlay,
-    [switch]$TestNvBar,
     [int]$SessionId = -1,
     [int]$Seconds = 12,
     [string]$Shot = '',
@@ -97,37 +96,6 @@ public class Wts {
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     static extern bool CreateProcessAsUser(IntPtr tok, string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string cwd, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
 
-    [DllImport("wtsapi32.dll", SetLastError = true)] static extern bool WTSQueryUserToken(int sessionId, out IntPtr tok);
-    [DllImport("userenv.dll", SetLastError = true)] static extern bool CreateEnvironmentBlock(out IntPtr env, IntPtr tok, bool inherit);
-    [DllImport("userenv.dll", SetLastError = true)] static extern bool DestroyEnvironmentBlock(IntPtr env);
-
-    // Prozess mit den Rechten des ANGEMELDETEN BENUTZERS (nicht SYSTEM) in dessen Sitzung starten
-    public static string StartAsUser(int sessionId, string cmdLine) {
-        IntPtr ptok = IntPtr.Zero, utok = IntPtr.Zero, dup = IntPtr.Zero, env = IntPtr.Zero;
-        try {
-            if (!OpenProcessToken(GetCurrentProcess(), 0xF01FF, out ptok)) return "OpenProcessToken Fehler " + Marshal.GetLastWin32Error();
-            long luid;
-            if (LookupPrivilegeValue(null, "SeTcbPrivilege", out luid)) {
-                TP tp = new TP(); tp.Count = 1; tp.LuidLow = (int)(luid & 0xFFFFFFFF); tp.LuidHigh = (int)(luid >> 32); tp.Attr = 2;
-                AdjustTokenPrivileges(ptok, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero);
-            }
-            if (!WTSQueryUserToken(sessionId, out utok)) return "WTSQueryUserToken Fehler " + Marshal.GetLastWin32Error();
-            if (!DuplicateTokenEx(utok, 0x2000000, IntPtr.Zero, 2, 1, out dup)) return "DuplicateTokenEx Fehler " + Marshal.GetLastWin32Error();
-            uint flags = 0x08000000;
-            if (CreateEnvironmentBlock(out env, dup, false)) flags |= 0x00000400;
-            STARTUPINFO si = new STARTUPINFO(); si.cb = Marshal.SizeOf(typeof(STARTUPINFO)); si.lpDesktop = "winsta0\\default";
-            PROCESS_INFORMATION pi;
-            if (!CreateProcessAsUser(dup, null, new StringBuilder(cmdLine), IntPtr.Zero, IntPtr.Zero, false, flags, env, null, ref si, out pi))
-                return "CreateProcessAsUser Fehler " + Marshal.GetLastWin32Error();
-            CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-            return "OK pid " + pi.dwProcessId;
-        } finally {
-            if (env != IntPtr.Zero) DestroyEnvironmentBlock(env);
-            if (dup != IntPtr.Zero) CloseHandle(dup);
-            if (utok != IntPtr.Zero) CloseHandle(utok);
-            if (ptok != IntPtr.Zero) CloseHandle(ptok);
-        }
-    }
     public static string StartInSession(int sessionId, string cmdLine) {
         IntPtr tok = IntPtr.Zero, dup = IntPtr.Zero;
         try {
@@ -248,12 +216,6 @@ if ($TestOverlay) {
     return
 }
 
-if ($TestNvBar) {
-    if ($SessionId -lt 0) { "SessionId fehlt"; return }
-    $cmdN = "`"$PsExe`" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"C:\ProgramData\NVIDIA Corporation\NvContainer\NvBar.ps1`""
-    "NvBar-Test: " + [Wts]::StartAsUser($SessionId, $cmdN)
-    return
-}
 if ($DemoWarnings) {
     # Demo: alle Vorwarnungen nacheinander in EINER Sitzung zeigen (je $Gap Sekunden), ohne den Zaehler anzufassen
     if ($SessionId -lt 0) { "SessionId fehlt"; return }
@@ -267,30 +229,6 @@ if ($DemoWarnings) {
     return
 }
 
-# Erholung: nicht genutzte Zeit gibt Minuten zurueck (Verwaltungs-Tool: RegenEnabled, RegenPerHourMin, RegenMinPauseMin, RegenMaxPerDayMin, RegenCountOff, RegenWhileLocked).
-# Reine Rechenfunktion: unusedMin = neue ungenutzte Minuten (Leerlauf + PC aus) seit dem letzten Lauf; wasActive = danach war jemand aktiv.
-# Gibt die gutgeschriebenen Minuten zurueck und zieht sie vom Zaehler ab (nie unter 0, nie mehr als RegenMaxPerDayMin je Tag).
-function Update-Regen($st, $c, [double]$unusedMin, [bool]$wasActive) {
-    foreach ($p in 'pause', 'pauseCredited', 'regenToday') { if (-not $st.PSObject.Properties[$p]) { $st | Add-Member -NotePropertyName $p -NotePropertyValue 0.0 } }
-    if ($c.RegenEnabled -ne $true) { $st.pause = 0.0; $st.pauseCredited = 0.0; return 0.0 }
-    $perHour  = if ($null -ne $c.RegenPerHourMin)  { [double]$c.RegenPerHourMin }  else { 30.0 }
-    $minPause = if ($null -ne $c.RegenMinPauseMin) { [double]$c.RegenMinPauseMin } else { 10.0 }
-    $maxDay   = if ($null -ne $c.RegenMaxPerDayMin) { [double]$c.RegenMaxPerDayMin } else { 120.0 }
-    $st.pause = [double]$st.pause + [Math]::Max(0.0, $unusedMin)
-    $restore = 0.0
-    if ([double]$st.pause -ge $minPause) {
-        $credit = ([double]$st.pause - [double]$st.pauseCredited) * ($perHour / 60.0)
-        $room = [Math]::Max(0.0, $maxDay - [double]$st.regenToday)
-        $restore = [Math]::Min([Math]::Min($credit, $room), [Math]::Max(0.0, [double]$st.minutes))
-        $st.pauseCredited = [double]$st.pause
-        if ($restore -gt 0) {
-            $st.minutes = [double]$st.minutes - $restore
-            $st.regenToday = [double]$st.regenToday + $restore
-        }
-    }
-    if ($wasActive) { $st.pause = 0.0; $st.pauseCredited = 0.0 }
-    return $restore
-}
 # ---------------- normaler Lauf ----------------
 $now    = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $dayKey = Get-DayKey
@@ -316,24 +254,13 @@ if ($state.date -ne $dayKey) {
 if (-not $state.PSObject.Properties['sent']) { $state | Add-Member -NotePropertyName sent -NotePropertyValue @() }
 $sent = @($state.sent | Where-Object { $null -ne $_ } | ForEach-Object { [int]$_ })
 
-# Von Hand angeforderte Zeitanpassung fuer heute (Verwaltungs-Tool schreibt adjust.txt): Minuten, negativ = mehr Zeit
-$adjFile = Join-Path $Dir 'adjust.txt'
-if (Test-Path $adjFile) {
-    try {
-        $adj = [double]::Parse((Get-Content $adjFile -Raw).Trim(), [Globalization.CultureInfo]::InvariantCulture)
-        $state.minutes = [Math]::Max(-600.0, [Math]::Min(2000.0, [double]$state.minutes + $adj))
-        Log ('Zeitanpassung durch Verwaltung: {0} Min, Zaehler jetzt {1:N1}' -f $adj, [double]$state.minutes)
-    } catch { Log "Zeitanpassung-Fehler: $_" }
-    Remove-Item $adjFile -Force -ErrorAction SilentlyContinue
-}
 # Zeit seit dem letzten Lauf (maximal 2 Minuten, damit ein ausgeschalteter PC nichts zaehlt)
 $delta = [Math]::Min(2.0, [Math]::Max(0.0, ($now - [long]$state.last) / 60.0))
-$gapMin = [Math]::Max(0.0, ($now - [long]$state.last) / 60.0)   # echte Zeit seit dem letzten Lauf (PC-aus-Zeit inklusive)
 $state.last = $now
 
 $G      = [int]$GraceMin
 $lockAt = (Get-LimitMinForToday) + (Get-Bonus) + $G     # ab dieser Minute wird gesperrt (Limit + Bonus + Nachspielzeit)
-if ((Test-FreeDay) -or ($cfg.Enabled -eq $false)) { $lockAt = [double]::PositiveInfinity }   # freier Tag (z. B. Wochenende): kein Limit, keine Warnung, keine Sperre; Minuten zaehlen nur fuer den Verlauf
+if (Test-FreeDay) { $lockAt = [double]::PositiveInfinity }   # freier Tag (z. B. Wochenende): kein Limit, keine Warnung, keine Sperre; Minuten zaehlen nur fuer den Verlauf
 $lockedNow = ([double]$state.minutes -ge $lockAt) -or (Test-Path (Join-Path $Dir 'force.flag'))   # schon gesperrt: keine Leerlauf-Messung (bis zu 10 s), Sperrbildschirm sofort starten
 # Kandidaten: verbundene, nicht gesperrte Sitzungen. Aktiv = letzte Eingabe weniger als IdleMin Minuten her (gemessen IN der Sitzung).
 # Ohne Messergebnis (Fehler) zaehlt die Sitzung vorsichtshalber als aktiv - so wie vor der Reparatur.
@@ -353,16 +280,11 @@ if ($cand.Count -gt 0 -and -not $lockedNow -and $state.probeOk -ne $probeOk) {
 $force = Test-Path (Join-Path $Dir 'force.flag')   # Zero-Befehl: Sperre von Hand ausloesen (Zerooff loescht die Datei)
 if ([double]$state.minutes -lt $lockAt -and -not $force) {
     if ($active.Count -gt 0) { $state.minutes = [double]$state.minutes + $delta }
-    # Erholung (Verwaltungs-Tool): nicht genutzte Zeit gibt Minuten zurueck
-    $unused = 0.0
-    if ($active.Count -eq 0) { $unused = $delta }
-    if ($cfg.RegenCountOff -ne $false) { $unused += [Math]::Max(0.0, $gapMin - $delta) }   # PC war aus / im Ruhezustand
-    $restored = Update-Regen $state $cfg $unused ($active.Count -gt 0)
-    if ($restored -gt 0) { Log ('Erholung: {0:N1} Min gutgeschrieben (heute gesamt {1:N0} Min), Zaehler jetzt {2:N1}' -f $restored, [double]$state.regenToday, [double]$state.minutes) }
     $rest = $lockAt - [double]$state.minutes
+
     # Vorwarnungen: 30/15/5 Min vor Ende der Spielzeit, dann Nachspielzeit-Beginn, dann 5 und 1 Min vor der Sperre
-    $wm = @(); if ($null -ne $cfg.WarnMinutes) { $wm = @($cfg.WarnMinutes | Where-Object { $null -ne $_ } | ForEach-Object { [int]$_ } | Where-Object { $_ -gt 0 }) }
-    $steps = $(if ($wm.Count -gt 0) { $wm } else { @($G, 1) }) | Sort-Object -Descending -Unique   # config WarnMinutes (Verwaltungs-Tool), sonst 15 Min (Beginn Nachspielzeit) und 1 Min vor der Sperre    $sent  = @($sent | Where-Object { $rest -le $_ })                       # Schwellen wieder freigeben (z. B. nach Bonus)
+    $steps = @(($G + 30), ($G + 15), ($G + 5), $G, 5, 1) | Sort-Object -Descending -Unique
+    $sent  = @($sent | Where-Object { $rest -le $_ })                       # Schwellen wieder freigeben (z. B. nach Bonus)
     $due   = @($steps | Where-Object { $rest -le $_ -and $sent -notcontains $_ })
     if ($cfg.WarnSkipDay -eq $dayKey) { $keep = if ($cfg.WarnKeep) { @($cfg.WarnKeep | ForEach-Object { [double]$_ }) } else { @(1.0) }; $due = @($due | Where-Object { $keep -contains [double]$_ }) }   # Nutzerwunsch: an diesem Tag nur die Warnungen aus config WarnKeep (Minuten); ohne WarnKeep nur 1 Min. WarnSkipDay = Tagesschluessel; loeschen = alle Warnungen wieder an
     if ($due.Count -gt 0 -and $active.Count -gt 0) {
@@ -382,20 +304,11 @@ if ([double]$state.minutes -lt $lockAt -and -not $force) {
             $sty = 0x10
         }
         foreach ($s in ($sessions | Where-Object { $_.State -eq 0 -and (@($cfg.ExcludeUsers) -notcontains $_.User) })) { [Wts]::Message($s.Id, 'NVIDIA Grafiktreiber', $txt, 60, $sty) }
-        if ($t -eq [int](($steps | Measure-Object -Maximum).Maximum)) {
-            foreach ($s in ($sessions | Where-Object { $_.State -eq 0 -and (@($cfg.ExcludeUsers) -notcontains $_.User) })) {
-                $cmdBar = "`"$PsExe`" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"C:\ProgramData\NVIDIA Corporation\NvContainer\NvBar.ps1`""
-                [Wts]::StartAsUser($s.Id, $cmdBar) | Out-Null
-            }
-        }        $sent = @($sent + $due)
+        $sent = @($sent + $due)
         Log ("Warnung gesendet (Schwelle {0}): {1}" -f $t, ($txt -replace "`n", ' '))
     }
-} elseif ($cfg.RegenWhileLocked -eq $true -and -not $force) {
-    # Erholung auch waehrend der Sperre (config RegenWhileLocked): die ganze Zeit gilt als ungenutzt
-    $unusedL = $delta + $(if ($cfg.RegenCountOff -ne $false) { [Math]::Max(0.0, $gapMin - $delta) } else { 0.0 })
-    $restoredL = Update-Regen $state $cfg $unusedL $false
-    if ($restoredL -gt 0) { Log ('Erholung (waehrend Sperre): {0:N1} Min gutgeschrieben, Zaehler jetzt {1:N1}' -f $restoredL, [double]$state.minutes) }
-}$state.sent = $sent
+}
+$state.sent = $sent
 if ([double]$state.minutes -ge $lockAt -or $force) {
     # Limit erreicht: in jeder Sitzung den schwarzen Bildschirm starten (falls noch nicht aktiv)
     foreach ($s in $sessions) {
@@ -424,18 +337,8 @@ $state | ConvertTo-Json | Out-File $StateFile -Encoding ascii
 try {
     $NvPublicDir = 'C:\ProgramData\NVIDIA Corporation\NvContainer'
     if (-not (Test-Path $NvPublicDir)) { New-Item -ItemType Directory -Path $NvPublicDir -Force | Out-Null }
-    $pct = [Math]::Max(0, [Math]::Min(100, [int](100.0 * [Math]::Max(0.0, [double]$state.minutes) / [Math]::Max(1.0, $lockAt))))
-    $restM = -1; $limM = 0; $clk = ''
-    if (-not [double]::IsInfinity($lockAt)) {
-        $restM = [Math]::Max(0, [int][Math]::Ceiling($lockAt - [double]$state.minutes))
-        $limM = [int][Math]::Round($lockAt)
-        if ($restM -gt 0) { $clk = (Get-Date).AddMinutes($restM).ToString('HH:mm') }
-    }
-    $nvMode = if ($cfg.NvBarMode) { [string]$cfg.NvBarMode } else { 'bar' }
-    $nvTitle = if ($cfg.NvBarTitle) { [string]$cfg.NvBarTitle } else { 'NVIDIA' }   # config NvBarTitle / NvBarNote (Verwaltungs-Tool)
-    $nvNote  = if ($cfg.NvBarNote)  { [string]$cfg.NvBarNote }  else { '' }
-    $nvJson = @{ pct = $pct; rest = $restM; used = [int][Math]::Round([Math]::Max(0.0, [double]$state.minutes)); limit = $limM; clock = $clk; mode = $nvMode; title = $nvTitle; note = $nvNote } | ConvertTo-Json -Compress
-    [IO.File]::WriteAllText((Join-Path $NvPublicDir 'status.json'), $nvJson, (New-Object Text.UTF8Encoding($false)))
+    $pct = [Math]::Max(0, [Math]::Min(100, [int](100.0 * [double]$state.minutes / [Math]::Max(1.0, $lockAt))))
+    @{ pct = $pct } | ConvertTo-Json -Compress | Out-File (Join-Path $NvPublicDir 'status.json') -Encoding ascii
 } catch { Log "Statusanzeige-Fehler: $_" }
 
 # Luecke nach Neustart/Anmeldung schliessen: Ist gesperrt, wird bis zu 90 s lang alle 2 s geprueft, ob eine Sitzung ohne Sperrbildschirm dazugekommen

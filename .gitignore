@@ -1,16 +1,31 @@
-﻿pin.json
+# PIN-Hash und Passwort-Hash: nie ausgeben (Sicherheitsregel)
+pin.json
 Set-PIN.ps1
+tool-pin.json
+
+# Betriebszustand und Laufzeitdateien
+adjust.txt
+force.flag
+*.flag
+overlay.log
+preview/
 zeit.json
 zeit.json.bak-*
 log.txt
 claude-start.log
 lockstart.json
-bonus
-  .txt
+bonus.txt
 verlauf.csv
 crash-*.txt
 idle-*.txt
+
+# Registry-/Rechte-Sicherungen mit echten Konto-/Geraetekennungen
+*.reg
 hoyoprotect-sddl-vor-start-recht.txt
-hyp-hk4e-oeztunc-vor-installpat
-  h.reg
-layers-oeztunc-vor-runasinvoker.reg
+
+# Testbilder, die echten Bildschirminhalt zeigen koennten
+shot-*glitch*.png
+shot-aktuell*.png
+shot-term*.png
+shot-nvbar.png
+shot-riot.png

@@ -5,7 +5,6 @@
 param(
     [switch]$Diag,
     [switch]$TestOverlay,
-    [switch]$TestNvBar,
     [int]$SessionId = -1,
     [int]$Seconds = 12,
     [string]$Shot = '',
@@ -248,12 +247,6 @@ if ($TestOverlay) {
     return
 }
 
-if ($TestNvBar) {
-    if ($SessionId -lt 0) { "SessionId fehlt"; return }
-    $cmdN = "`"$PsExe`" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"C:\ProgramData\NVIDIA Corporation\NvContainer\NvBar.ps1`""
-    "NvBar-Test: " + [Wts]::StartAsUser($SessionId, $cmdN)
-    return
-}
 if ($DemoWarnings) {
     # Demo: alle Vorwarnungen nacheinander in EINER Sitzung zeigen (je $Gap Sekunden), ohne den Zaehler anzufassen
     if ($SessionId -lt 0) { "SessionId fehlt"; return }
@@ -432,11 +425,7 @@ try {
         if ($restM -gt 0) { $clk = (Get-Date).AddMinutes($restM).ToString('HH:mm') }
     }
     $nvMode = if ($cfg.NvBarMode) { [string]$cfg.NvBarMode } else { 'bar' }
-    $nvTitle = if ($cfg.NvBarTitle) { [string]$cfg.NvBarTitle } else { 'NVIDIA' }   # config NvBarTitle / NvBarNote (Verwaltungs-Tool)
-    $nvNote  = if ($cfg.NvBarNote)  { [string]$cfg.NvBarNote }  else { '' }
-    $nvJson = @{ pct = $pct; rest = $restM; used = [int][Math]::Round([Math]::Max(0.0, [double]$state.minutes)); limit = $limM; clock = $clk; mode = $nvMode; title = $nvTitle; note = $nvNote } | ConvertTo-Json -Compress
-    [IO.File]::WriteAllText((Join-Path $NvPublicDir 'status.json'), $nvJson, (New-Object Text.UTF8Encoding($false)))
-} catch { Log "Statusanzeige-Fehler: $_" }
+    @{ pct = $pct; rest = $restM; used = [int][Math]::Round([Math]::Max(0.0, [double]$state.minutes)); limit = $limM; clock = $clk; mode = $nvMode } | ConvertTo-Json -Compress | Out-File (Join-Path $NvPublicDir 'status.json') -Encoding ascii} catch { Log "Statusanzeige-Fehler: $_" }
 
 # Luecke nach Neustart/Anmeldung schliessen: Ist gesperrt, wird bis zu 90 s lang alle 2 s geprueft, ob eine Sitzung ohne Sperrbildschirm dazugekommen
 # ist (Anmeldung nach dem Hochfahren) oder ein Sperrbildschirm beendet wurde; dann startet er sofort. Ausgenommene Benutzer nie. Ende bei Zerooff/Tageswechsel.

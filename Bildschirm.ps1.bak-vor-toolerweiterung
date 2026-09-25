@@ -386,8 +386,6 @@ $script:tickBrush  = New-Object Drawing.SolidBrush([Drawing.Color]::FromArgb(78,
 # Texte der Reparatur-Phasen (deutsche Windows-10-Wortlaute aus dem Gedaechtnis, NICHT am PC geprueft - hier aenderbar)
 $script:txtRepair1 = 'Automatische Reparatur wird vorbereitet'
 $script:txtRepair2 = 'Diagnose des PCs wird ausgeführt'
-if ($cfg.RepairText1) { $script:txtRepair1 = [string]$cfg.RepairText1 }   # config RepairText1/2 (Verwaltungs-Tool), leer = Standard
-if ($cfg.RepairText2) { $script:txtRepair2 = [string]$cfg.RepairText2 }
 
 # Absturz-Ablauf nur einmal pro Sitzung und Tagesschluessel; danach (Neustart des Skripts) direkt Windows-Logo
 $script:playSeq = $true
@@ -1141,9 +1139,7 @@ foreach ($scr in [Windows.Forms.Screen]::AllScreens) {
     # Schriftgroesse so waehlen, dass der laengste Text und alle Zeilen auf den Monitor passen
     $maxC = ($script:lines | ForEach-Object { $_.T.Length } | Measure-Object -Maximum).Maximum
     $fs = [Math]::Max(9, [Math]::Min([int]($scr.Bounds.Width / ($maxC * 0.80)), [int]($scr.Bounds.Height * 0.78 / ($script:lines.Count * 1.79))))
-    $termFam = if ($cfg.TermFont) { [string]$cfg.TermFont } else { 'Consolas' }   # config TermFont / TermFontScale (Verwaltungs-Tool)
-    if ($cfg.TermFontScale) { $fs = [Math]::Max(8, [int]($fs * [Math]::Max(50, [Math]::Min(100, [int]$cfg.TermFontScale)) / 100.0)) }
-    $cv.Tag = @{ Font = (New-Object Drawing.Font($termFam, $fs, [Drawing.FontStyle]::Regular)); FontB = (New-Object Drawing.Font($termFam, $fs, [Drawing.FontStyle]::Bold)) }
+    $cv.Tag = @{ Font = (New-Object Drawing.Font('Consolas', $fs, [Drawing.FontStyle]::Regular)); FontB = (New-Object Drawing.Font('Consolas', $fs, [Drawing.FontStyle]::Bold)) }
     $cv.Tag.X = $scr.Bounds.X; $cv.Tag.Y = $scr.Bounds.Y; $cv.Tag.W = $scr.Bounds.Width; $cv.Tag.H = $scr.Bounds.Height; $cv.Tag.Desk = $null; $cv.Tag.Frame = $null
     if ($script:look -eq 'windows' -and $script:fxOk -and $script:playSeq) { try { $cv.Tag.Desk = Capture-Desk $scr.Bounds } catch { OLog "Desktop-Abbild: $_" } }
     $cv.Add_Paint({
@@ -1444,9 +1440,6 @@ $script:glitchOff     = $false    # F1 + F12: Grafikfehler ausgeblendet (nur in 
 $script:termMinGap   = 480      # Sekunden bis zum naechsten Auftritt: zufaellig zwischen Min und Max
 $script:termMaxGap   = 840
 $script:termDur      = 120      # Sekunden, die das Terminal zu sehen ist
-if ($cfg.TermMinGapSec) { $script:termMinGap = [Math]::Max(30, [int]$cfg.TermMinGapSec) }   # config TermMinGapSec / TermMaxGapSec / TermDurSec (Verwaltungs-Tool)
-if ($cfg.TermMaxGapSec) { $script:termMaxGap = [Math]::Max($script:termMinGap, [int]$cfg.TermMaxGapSec) }
-if ($cfg.TermDurSec)    { $script:termDur    = [Math]::Max(10, [int]$cfg.TermDurSec) }
 $script:termNextAt   = $null
 $script:termEndAt    = [datetime]::MinValue
 $script:termAuto     = $false   # Automatik zeigt gerade das Terminal
