@@ -32,7 +32,7 @@ Alles läuft unter Windows 10/11 mit Windows PowerShell 5.1.
 | Reparatur-Sätze, Terminal-Schrift/-Abstand/-Dauer | Reiter „Diagnose" | mit Vorschau |
 | **Erholung** (ungenutzte Zeit gibt Minuten zurück) | Reiter „Abkühlung" | **standardmäßig an** |
 | Beispielbilder ansehen, alles testen | Reiter „Vorschau" | Test-Knöpfe fragen vorher nach |
-| Werkzeug-Passwort / Windows-Passwort ändern | Reiter „Zugriff" | Windows-Passwort nur mit dem aktuellen |
+| Werkzeug-Passwort / Windows-Passwort / **Support-Code** (PIN am Fehlerbildschirm) ändern | Reiter „Zugriff" | Windows-Passwort und Support-Code nur mit dem aktuellen; Support-Code mind. 6 Zeichen, gilt sofort |
 | Alle Tastenkürzel, Befehle und der Ablauf | Reiter „Hilfe" → Knopf „Info" | |
 | Schriftgröße des Fensters | Reiter „Hilfe" | Größe: Fenster an den Rändern ziehen |
 

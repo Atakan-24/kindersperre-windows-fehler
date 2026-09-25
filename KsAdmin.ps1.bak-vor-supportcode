@@ -345,41 +345,27 @@ $bTWarn  = New-Btn $tPrev 'Meldungen' 434 398 130
 $bTNvMe  = New-Btn $tPrev 'NVIDIA bei mir' 10 440 180
 $bTNvKid = New-Btn $tPrev 'NVIDIA auf Zielkonto' 198 440 210
 
-# ===== Tab: Zugriff (Werkzeug-Passwort, Windows-Passwort, Support-Code) - drei Spalten =====
+# ===== Tab: Zugriff (Werkzeug-Passwort und Windows-Passwort) =====
 $tPw = New-Tab 'Zugriff'
-function New-PwBox($tab, [int]$x, [int]$y) {
-    $b = New-Object Windows.Forms.TextBox; $b.Location = New-Object Drawing.Point($x, $y); $b.Size = New-Object Drawing.Size(178, 28); $b.UseSystemPasswordChar = $true
-    $tab.Controls.Add($b); return $b
-}
-$cx1 = 12; $cx2 = 207; $cx3 = 402
-[void](New-Lbl $tPw 'Werkzeug-Passwort' $cx1 10 180 24)
-[void](New-Lbl $tPw 'Aktuell:' $cx1 40 180 22)
-$tbOld = New-PwBox $tPw $cx1 62
-[void](New-Lbl $tPw 'Neu (mind. 4 Zeichen):' $cx1 98 180 22)
-$tbNew = New-PwBox $tPw $cx1 120
-[void](New-Lbl $tPw 'Wiederholen:' $cx1 156 180 22)
-$tbNew2 = New-PwBox $tPw $cx1 178
-$bPw = New-Btn $tPw 'Passwort aendern' $cx1 216 178 34
-$lPw = New-Lbl $tPw '' $cx1 256 178 66
-[void](New-Lbl $tPw 'Windows-Passwort' $cx2 10 180 24)
-[void](New-Lbl $tPw 'Aktuell:' $cx2 40 180 22)
-$tbWinOld = New-PwBox $tPw $cx2 62
-[void](New-Lbl $tPw 'Neu (mind. 6 Zeichen):' $cx2 98 180 22)
-$tbWinNew = New-PwBox $tPw $cx2 120
-[void](New-Lbl $tPw 'Wiederholen:' $cx2 156 180 22)
-$tbWinNew2 = New-PwBox $tPw $cx2 178
-$bWin = New-Btn $tPw 'Windows aendern' $cx2 216 178 34
-$lWin = New-Lbl $tPw '' $cx2 256 178 66
-[void](New-Lbl $tPw 'Support-Code' $cx3 10 180 24)
-[void](New-Lbl $tPw 'Aktuell:' $cx3 40 180 22)
-$tbPinOld = New-PwBox $tPw $cx3 62
-[void](New-Lbl $tPw 'Neu (mind. 6 Zeichen):' $cx3 98 180 22)
-$tbPinNew = New-PwBox $tPw $cx3 120
-[void](New-Lbl $tPw 'Wiederholen:' $cx3 156 180 22)
-$tbPinNew2 = New-PwBox $tPw $cx3 178
-$bPin = New-Btn $tPw 'Code aendern' $cx3 216 178 34
-$lPin = New-Lbl $tPw '' $cx3 256 178 66
-[void](New-Lbl $tPw 'Support-Code: wird am Fehlerbildschirm im versteckten Feld eingegeben. Fuer das Windows-Passwort wird das aktuelle gebraucht. Nichts davon wird angezeigt, gespeichert oder protokolliert.' 12 330 570 50)
+[void](New-Lbl $tPw 'Werkzeug-Passwort (dieses Fenster)' 20 10 270 24)
+[void](New-Lbl $tPw 'Aktuelles Passwort:' 20 40 270 22)
+$tbOld = New-Object Windows.Forms.TextBox; $tbOld.Location = New-Object Drawing.Point(20, 62); $tbOld.Size = New-Object Drawing.Size(255, 28); $tbOld.UseSystemPasswordChar = $true; $tPw.Controls.Add($tbOld)
+[void](New-Lbl $tPw 'Neues Passwort (mind. 4 Zeichen):' 20 98 270 22)
+$tbNew = New-Object Windows.Forms.TextBox; $tbNew.Location = New-Object Drawing.Point(20, 120); $tbNew.Size = New-Object Drawing.Size(255, 28); $tbNew.UseSystemPasswordChar = $true; $tPw.Controls.Add($tbNew)
+[void](New-Lbl $tPw 'Neues Passwort wiederholen:' 20 156 270 22)
+$tbNew2 = New-Object Windows.Forms.TextBox; $tbNew2.Location = New-Object Drawing.Point(20, 178); $tbNew2.Size = New-Object Drawing.Size(255, 28); $tbNew2.UseSystemPasswordChar = $true; $tPw.Controls.Add($tbNew2)
+$bPw = New-Btn $tPw 'Passwort aendern' 20 216 255 34
+$lPw = New-Lbl $tPw '' 20 256 255 60
+[void](New-Lbl $tPw 'Windows-Passwort von Verwalter' 305 10 270 24)
+[void](New-Lbl $tPw 'Aktuelles Windows-Passwort:' 305 40 270 22)
+$tbWinOld = New-Object Windows.Forms.TextBox; $tbWinOld.Location = New-Object Drawing.Point(305, 62); $tbWinOld.Size = New-Object Drawing.Size(255, 28); $tbWinOld.UseSystemPasswordChar = $true; $tPw.Controls.Add($tbWinOld)
+[void](New-Lbl $tPw 'Neues Passwort (mind. 6 Zeichen):' 305 98 270 22)
+$tbWinNew = New-Object Windows.Forms.TextBox; $tbWinNew.Location = New-Object Drawing.Point(305, 120); $tbWinNew.Size = New-Object Drawing.Size(255, 28); $tbWinNew.UseSystemPasswordChar = $true; $tPw.Controls.Add($tbWinNew)
+[void](New-Lbl $tPw 'Neues Passwort wiederholen:' 305 156 270 22)
+$tbWinNew2 = New-Object Windows.Forms.TextBox; $tbWinNew2.Location = New-Object Drawing.Point(305, 178); $tbWinNew2.Size = New-Object Drawing.Size(255, 28); $tbWinNew2.UseSystemPasswordChar = $true; $tPw.Controls.Add($tbWinNew2)
+$bWin = New-Btn $tPw 'Windows-Passwort aendern' 305 216 255 34
+$lWin = New-Lbl $tPw '' 305 256 255 60
+[void](New-Lbl $tPw 'Fuer das Windows-Passwort wird das aktuelle gebraucht (so bleiben gespeicherte Anmeldedaten erhalten). Kein Passwort wird gespeichert oder protokolliert.' 20 326 540 60)
 $script:PwAction = {
     $lPw.ForeColor = [Drawing.Color]::Red
     if (-not (Test-ToolPin $tbOld.Text)) { $lPw.Text = 'Aktuelles Passwort stimmt nicht.'; return }
@@ -402,33 +388,7 @@ $script:WinPwAction = {
     $lWin.ForeColor = [Drawing.Color]::DarkGreen; $lWin.Text = 'Windows-Passwort geaendert (' + (Get-Date -Format 'HH:mm:ss') + '). Ab jetzt gilt das neue Passwort.'
 }
 $bWin.Add_Click($script:WinPwAction)
-# Support-Code (die PIN fuer das versteckte Feld am Fehlerbildschirm): gleiche Ablage und gleiches Verfahren wie das Werkzeug-Passwort (PBKDF2, Salz), Datei pin.json
-$PinFile = Join-Path $Dir 'pin.json'
-function Test-SupportCode([string]$code) {
-    try {
-        $p = Get-Content $PinFile -Raw | ConvertFrom-Json
-        $h = Hash-Pin $code ([Convert]::FromBase64String($p.salt))
-        return ([Convert]::ToBase64String($h) -eq $p.hash)
-    } catch { return $false }
-}
-function Save-SupportCode([string]$code) {
-    $salt = New-Object byte[] 16
-    (New-Object Security.Cryptography.RNGCryptoServiceProvider).GetBytes($salt)
-    $hash = Hash-Pin $code $salt
-    @{ salt = [Convert]::ToBase64String($salt); hash = [Convert]::ToBase64String($hash) } | ConvertTo-Json -Compress | Out-File $PinFile -Encoding ascii
-}
-$script:PinAction = {
-    $lPin.ForeColor = [Drawing.Color]::Red
-    $exists = Test-Path $PinFile
-    if ($exists -and -not (Test-SupportCode $tbPinOld.Text)) { $lPin.Text = 'Aktueller Code stimmt nicht.'; return }
-    if ($tbPinNew.Text.Length -lt 6) { $lPin.Text = 'Neuer Code: mindestens 6 Zeichen.'; return }
-    if ($tbPinNew.Text -ne $tbPinNew2.Text) { $lPin.Text = 'Die beiden neuen Codes stimmen nicht ueberein.'; return }
-    if ($exists) { Copy-Item $PinFile ($PinFile + '.bak-vor-aenderung') -Force }
-    Save-SupportCode $tbPinNew.Text
-    $tbPinOld.Text = ''; $tbPinNew.Text = ''; $tbPinNew2.Text = ''
-    $lPin.ForeColor = [Drawing.Color]::DarkGreen; $lPin.Text = 'Code geaendert (' + (Get-Date -Format 'HH:mm:ss') + '). Gilt sofort.'
-}
-$bPin.Add_Click($script:PinAction)
+
 # ===== Tab: Hilfe (ganz rechts): nur ein Info-Knopf; Ablauf, Kurzbefehle und Tests stehen im Info-Fenster =====
 $tKeys = New-Tab 'Hilfe'
 $script:HelpText = @"

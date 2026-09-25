@@ -31,7 +31,7 @@ Windows 10/11 with Windows PowerShell 5.1.
 | Repair sentences, terminal font/interval/duration | tab "Diagnose" | with preview |
 | **Recovery** (unused time gives minutes back) | tab "Abkühlung" | **on by default** |
 | See example images, test everything | tab "Vorschau" | test buttons ask first |
-| Change tool password / Windows password | tab "Zugriff" | Windows password only with the current one |
+| Change tool password / Windows password / **support code** (PIN on the error screen) | tab "Zugriff" | Windows password and support code only with the current one; support code at least 6 characters, effective immediately |
 | All key combinations, commands and the sequence | tab "Hilfe" → "Info" button | |
 | Font size of the window | tab "Hilfe" | size: drag the window edges |
 

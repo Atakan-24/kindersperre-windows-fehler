@@ -174,7 +174,9 @@ NVIDIA-Anzeige bei mir / auf dem Zielkonto). Knöpfe, die auf dem Bildschirm des
 ### Reiter „Zugriff"
 ![Reiter Zugriff](docs/tool-zugriff.png)
 
-Links das Werkzeug-Passwort, rechts das Windows-Passwort von Verwalter.
+Drei Spalten: links das Werkzeug-Passwort, in der Mitte das Windows-Passwort von Verwalter, rechts der **Support-Code** (die PIN für
+das versteckte Feld am Fehlerbildschirm, `pin.json`, mindestens 6 Zeichen, gilt sofort). Beim Support-Code wird der aktuelle Code
+verlangt, die alte Datei wird als `pin.json.bak-vor-aenderung` gesichert. Der Code wird nie angezeigt oder protokolliert.
 
 ### Reiter „Hilfe" mit Info-Knopf
 ![Reiter Hilfe](docs/tool-hilfe.png)

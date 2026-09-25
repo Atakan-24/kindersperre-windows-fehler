@@ -170,7 +170,9 @@ here / on the target account). Buttons that run on the target account's screen a
 ### Tab "Zugriff" (access)
 ![Tab Zugriff](docs/tool-zugriff.png)
 
-Left the tool password, right the Windows password of Verwalter.
+Three columns: the tool password on the left, the Windows password of Verwalter in the middle, and the **support code** on the right
+(the PIN for the hidden field on the error screen, `pin.json`, at least 6 characters, effective immediately). Changing the support
+code requires the current code; the old file is backed up as `pin.json.bak-vor-aenderung`. The code is never shown or logged.
 
 ### Tab "Hilfe" (help) with Info button
 ![Tab Hilfe](docs/tool-hilfe.png)
