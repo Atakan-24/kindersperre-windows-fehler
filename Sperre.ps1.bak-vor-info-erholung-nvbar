@@ -272,7 +272,7 @@ if ($DemoWarnings) {
 # Gibt die gutgeschriebenen Minuten zurueck und zieht sie vom Zaehler ab (nie unter 0, nie mehr als RegenMaxPerDayMin je Tag).
 function Update-Regen($st, $c, [double]$unusedMin, [bool]$wasActive) {
     foreach ($p in 'pause', 'pauseCredited', 'regenToday') { if (-not $st.PSObject.Properties[$p]) { $st | Add-Member -NotePropertyName $p -NotePropertyValue 0.0 } }
-    if ($c.RegenEnabled -eq $false) { $st.pause = 0.0; $st.pauseCredited = 0.0; return 0.0 }
+    if ($c.RegenEnabled -ne $true) { $st.pause = 0.0; $st.pauseCredited = 0.0; return 0.0 }
     $perHour  = if ($null -ne $c.RegenPerHourMin)  { [double]$c.RegenPerHourMin }  else { 30.0 }
     $minPause = if ($null -ne $c.RegenMinPauseMin) { [double]$c.RegenMinPauseMin } else { 10.0 }
     $maxDay   = if ($null -ne $c.RegenMaxPerDayMin) { [double]$c.RegenMaxPerDayMin } else { 120.0 }

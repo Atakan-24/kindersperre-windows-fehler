@@ -313,7 +313,7 @@ function Update-ErrPreview {
 # ===== Tab: Abkuehlung =====
 $tRg = New-Tab ('Abk' + [char]0xFC + 'hlung')
 [void](New-Lbl $tRg 'Ungenutzte Phasen (Pause oder PC aus) geben dem System Minuten zurueck.' 20 15 550 26)
-$cRgEn  = New-Chk $tRg 'Abkuehlung aktiv' 20 50 ($cfg.RegenEnabled -ne $false)
+$cRgEn  = New-Chk $tRg 'Abkuehlung aktiv' 20 50 ($cfg.RegenEnabled -eq $true)
 $nRgPer = New-Num $tRg 'Zurueckgegeben je 60 Min Pause (Min)' 20 92 $(if ($null -ne $cfg.RegenPerHourMin) { $cfg.RegenPerHourMin } else { 30 }) 0 60
 $nRgMin = New-Num $tRg 'Pause muss mindestens so lang sein (Min)' 20 130 $(if ($null -ne $cfg.RegenMinPauseMin) { $cfg.RegenMinPauseMin } else { 10 }) 0 120
 $nRgMax = New-Num $tRg 'Hoechstens pro Tag zurueck (Min)' 20 168 $(if ($null -ne $cfg.RegenMaxPerDayMin) { $cfg.RegenMaxPerDayMin } else { 120 }) 0 480
@@ -389,26 +389,9 @@ $script:WinPwAction = {
 }
 $bWin.Add_Click($script:WinPwAction)
 
-# ===== Tab: Hilfe (ganz rechts): nur ein Info-Knopf; Ablauf, Kurzbefehle und Tests stehen im Info-Fenster =====
+# ===== Tab: Hilfe (ganz rechts): Erklaerung aller Kurzbefehle und Tests, Ansicht =====
 $tKeys = New-Tab 'Hilfe'
-$script:HelpText = @"
-ABLAUF EINER FEHLERDIAGNOSE
-
-1. Vorab-Meldungen (Standard: 15 und 1 Minute vorher) als Grafiktreiber-Hinweis.
-   Die NVIDIA-Anzeige mit dem Balken erscheint.
-2. Bildfehler auf dem echten Desktop, kurzes Schwarzbild, starker Bildfehler.
-3. Bluescreen (VIDEO_TDR_FAILURE).
-4. Windows-Logo mit Ladepunkten, danach "Automatische Reparatur wird vorbereitet"
-   und "Diagnose des PCs wird ausgefuehrt".
-5. Alle 8 bis 14 Minuten fuer 2 Minuten die Diagnose-Konsole
-   ("Wiederherstellungsversuch N von 30"), verteilt bis zum Tageswechsel.
-6. Ende zum Tageswechsel (6 Uhr): kurz Schwarz, Logo, dann der Desktop.
-7. Nach einem gueltigen Code (+60 Minuten) laeuft bis zum Tageswechsel die
-   Grafik-Ueberlagerung (Bildfehler-Effekte).
-8. Abkuehlung: ungenutzte Zeit (Pause oder PC aus) gibt Minuten zurueck
-   (Reiter "Abkuehlung", standardmaessig an).
-
-
+$help = @"
 TASTENKUERZEL WAEHREND EINES FEHLERBILDSCHIRMS
 (nur wenn gerade ein Fehlerbildschirm angezeigt wird, nichts wird gespeichert)
 
@@ -441,35 +424,20 @@ TEST-KNOEPFE (Reiter "Vorschau" und "NVIDIA")
 Sie starten dasselbe wie die Befehle, laufen aber auf dem Bildschirm des Zielkontos
 und fragen vorher nach. "NVIDIA bei mir" oeffnet die Anzeige nur auf diesem Bildschirm.
 "@
-$script:InfoAction = {
-    $d = New-Object Windows.Forms.Form
-    $d.Text = 'Fehlerdiagnose - Ablauf'
-    $d.Font = $f.Font
-    $d.FormBorderStyle = 'Sizable'; $d.MinimizeBox = $false; $d.MaximizeBox = $false; $d.ShowInTaskbar = $false
-    $d.StartPosition = 'CenterParent'; $d.ClientSize = New-Object Drawing.Size(600, 520)
-    $tb = New-Object Windows.Forms.TextBox
-    $tb.Multiline = $true; $tb.ReadOnly = $true; $tb.ScrollBars = 'Vertical'; $tb.WordWrap = $true
-    $tb.BackColor = [Drawing.Color]::White; $tb.Font = New-Object Drawing.Font('Consolas', 9.5)
-    $tb.Location = New-Object Drawing.Point(10, 10); $tb.Size = New-Object Drawing.Size(580, 456); $tb.Anchor = 'Top,Bottom,Left,Right'
-    $tb.Text = $script:HelpText.Replace("`r`n", "`n").Replace("`n", "`r`n")
-    $tb.TabStop = $false
-    $d.Controls.Add($tb)
-    $bx = New-Object Windows.Forms.Button
-    $bx.Text = 'Schliessen'; $bx.Location = New-Object Drawing.Point(480, 474); $bx.Size = New-Object Drawing.Size(110, 34); $bx.Anchor = 'Bottom,Right'
-    $bx.Add_Click({ $d.Close() })
-    $d.Controls.Add($bx); $d.CancelButton = $bx
-    $d.Add_Shown({ $tb.SelectionStart = 0; $tb.SelectionLength = 0; $bx.Focus() })
-    [void]$d.ShowDialog($f)
-}
-[void](New-Lbl $tKeys 'Informationen zur Fehlerdiagnose:' 10 12 560 24)
-$bInfo = New-Btn $tKeys 'Info' 10 44 200
-$bInfo.Add_Click($script:InfoAction)
-[void](New-Lbl $tKeys 'Ansicht - Schriftgroesse:' 10 116 200 24)
-$cbSize = New-Object Windows.Forms.ComboBox; $cbSize.DropDownStyle = 'DropDownList'; $cbSize.Location = New-Object Drawing.Point(215, 113); $cbSize.Size = New-Object Drawing.Size(160, 28)
+$tbHelp = New-Object Windows.Forms.TextBox
+$tbHelp.Multiline = $true; $tbHelp.ReadOnly = $true; $tbHelp.ScrollBars = 'Vertical'; $tbHelp.WordWrap = $true
+$tbHelp.BackColor = [Drawing.Color]::White; $tbHelp.Font = New-Object Drawing.Font('Consolas', 9.5)
+$tbHelp.Location = New-Object Drawing.Point(10, 8); $tbHelp.Size = New-Object Drawing.Size(560, 340)
+$tbHelp.Text = $help.Replace("`r`n", "`n").Replace("`n", "`r`n")
+$tbHelp.TabStop = $false; $tbHelp.SelectionStart = 0; $tbHelp.SelectionLength = 0
+$tKeys.Controls.Add($tbHelp)
+[void](New-Lbl $tKeys 'Ansicht - Schriftgroesse:' 10 362 200 24)
+$cbSize = New-Object Windows.Forms.ComboBox; $cbSize.DropDownStyle = 'DropDownList'; $cbSize.Location = New-Object Drawing.Point(215, 359); $cbSize.Size = New-Object Drawing.Size(160, 28)
 foreach ($n in 'Klein (9)', 'Normal (10)', 'Gross (11)', 'Sehr gross (12)') { [void]$cbSize.Items.Add($n) }
 $cbSize.SelectedIndex = [Math]::Max(0, [Math]::Min(3, $script:uiFont - 9))
 $tKeys.Controls.Add($cbSize)
-[void](New-Lbl $tKeys 'Die Fenstergroesse laesst sich mit der Maus an den Raendern ziehen. Beides wird gemerkt.' 10 152 560 44)
+[void](New-Lbl $tKeys 'Die Fenstergroesse laesst sich mit der Maus an den Raendern ziehen. Beides wird gemerkt.' 10 394 560 44)
+
 # ===== Untere Leiste: Auslastung in %, Statuszeile, Schliessen =====
 $pbDay = New-Object Windows.Forms.ProgressBar
 $pbDay.Location = New-Object Drawing.Point(12, ($winH - 82)); $pbDay.Size = New-Object Drawing.Size(($winW - 24), 18)
