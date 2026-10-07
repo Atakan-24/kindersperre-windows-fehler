@@ -72,7 +72,7 @@ Write-Host 'Windows Screen Time Manager - guided setup'
 Write-Host 'Creates protected folders and a SYSTEM scheduled task. Monitoring starts OFF.'
 Assert-SafePath $dir; Assert-SafePath $nv
 if ((Test-Path -LiteralPath $dir) -or (Test-Path -LiteralPath $nv) -or (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) { throw 'Existing folder/task found. Nothing changed. Use a fresh test PC; no upgrades are performed.' }
-$files = @('Sperre.ps1','Bildschirm.ps1','KsAdmin.ps1','Zero.ps1','Zerooff.ps1','Zerotest.ps1','IdleProbe.cs','assets\winlogo.png','NvContainer\NvBar.ps1','Uninstall.ps1','shot-bsod.png','shot-logo.png','shot-repair.png','shot-terminal.png')
+$files = @('Sperre.ps1','RuntimeFiles.ps1','Bildschirm.ps1','KsAdmin.ps1','Zero.ps1','Zerooff.ps1','Zerotest.ps1','IdleProbe.cs','assets\winlogo.png','NvContainer\NvBar.ps1','Uninstall.ps1','shot-bsod.png','shot-logo.png','shot-repair.png','shot-terminal.png')
 foreach ($file in $files) { if (-not (Test-Path -LiteralPath (Join-Path $root $file) -PathType Leaf)) { throw "Missing file: $file. Extract the full repository ZIP first." } }
 $userName = Read-Host 'Existing local administrator account name (not DOMAIN\name)'
 if ($userName -notmatch '^[\p{L}\p{N}_.-]+$') { throw 'Use a local account name without spaces or special shell characters.' }
@@ -97,7 +97,7 @@ try {
     New-Item -ItemType Directory -Path $nv -Force | Out-Null; $madeNv = $true
     Set-ProtectedAcl $nv $true
     New-Item -ItemType Directory -Path "$dir\assets","$dir\preview" | Out-Null
-    foreach ($file in 'Sperre.ps1','Bildschirm.ps1','KsAdmin.ps1','Zero.ps1','Zerooff.ps1','Zerotest.ps1','IdleProbe.cs','Uninstall.ps1') { Copy-Item -LiteralPath (Join-Path $root $file) -Destination $dir }
+    foreach ($file in 'Sperre.ps1','RuntimeFiles.ps1','Bildschirm.ps1','KsAdmin.ps1','Zero.ps1','Zerooff.ps1','Zerotest.ps1','IdleProbe.cs','Uninstall.ps1') { Copy-Item -LiteralPath (Join-Path $root $file) -Destination $dir }
     & $compiler /nologo /target:exe /out:"$dir\IdleProbe.exe" "$dir\IdleProbe.cs"
     if ($LASTEXITCODE -ne 0) { throw 'IdleProbe compilation failed.' }
     Copy-Item -LiteralPath "$root\assets\winlogo.png" -Destination "$dir\assets"

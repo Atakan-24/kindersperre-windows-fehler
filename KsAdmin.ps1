@@ -7,6 +7,7 @@
 # Fenstergroesse und Schriftgroesse werden in tool-ui.json gemerkt.
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+. (Join-Path $PSScriptRoot 'RuntimeFiles.ps1')
 [Windows.Forms.Application]::EnableVisualStyles()
 
 $Dir      = 'C:\ProgramData\Kindersperre'
@@ -656,7 +657,7 @@ $script:SaveAction = {
         # config.json bleibt reines ASCII (Nicht-ASCII-Zeichen als \uXXXX)
         $json = $c | ConvertTo-Json
         $json = [regex]::Replace($json, '[^\x00-\x7F]', [Text.RegularExpressions.MatchEvaluator]{ param($m) ('\u{0:x4}' -f [int][char]$m.Value) })
-        $json | Out-File $CfgFile -Encoding ascii
+        Write-AtomicText $CfgFile $json
         $script:cfg = $c
         $lStatus.ForeColor = [Drawing.Color]::DarkGreen
         $lStatus.Text = 'Automatisch gespeichert um ' + (Get-Date -Format 'HH:mm:ss') + '.'
