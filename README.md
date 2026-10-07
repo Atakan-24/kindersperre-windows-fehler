@@ -2,7 +2,7 @@
 
 Ein Windows-System zur Bildschirmzeitverwaltung und Kindersicherung mit **PowerShell**, **Windows Task Scheduler/SYSTEM**, **WTS Session Handling**, **ACLs**, **Win32/.NET APIs**, **PBKDF2** und **JSON-Konfiguration**.
 
-Systemweite Zeiterfassung läuft im Hintergrund; Status- und Sperroberflächen erscheinen in der aktiven Benutzersitzung.
+Systemweite Zeiterfassung läuft im Hintergrund; Status- und Sperroberflächen erscheinen in der aktiven Benutzersitzung. Entwickelt mit Unterstützung von Claude Code.
 
 [English](README.en.md) · [Vollständige Dokumentation und Screenshots](docs/DOCUMENTATION.md) · [Einrichtung und Bedienung](docs/ANLEITUNG.md)
 
@@ -56,9 +56,3 @@ Das bestehende Setup wurde getestet. Die [vollständige Dokumentation](docs/DOCU
 - [Security](docs/DOCUMENTATION.md#sicherheit)
 
 Die Fehler- und Reparaturbildschirme sind Simulationen, keine echten Hardware- oder Betriebssystemfehler. Das Projekt ist nicht mit Microsoft oder NVIDIA verbunden.
-
-## Automatisierte Prüfungen
-
-`powershell.exe -NoProfile -File tests/Test-Logic.ps1` prüft alle PowerShell-Dateien syntaktisch und testet die reine Datei- und Pausenlogik. GitHub Actions führt dieselben Prüfungen unter Windows PowerShell 5.1 und PowerShell 7 aus. Die Tests installieren nichts, starten keine SYSTEM-Tasks und rufen keine Win32-Sitzungsfunktionen auf.
-
-Zähler und Konfiguration werden über eine temporäre Datei ersetzt; die vorherige Fassung bleibt als `.bak` erhalten. Ein beschädigter Zähler wird aus der Sicherung gelesen oder als Fehler gemeldet, statt still auf null zurückgesetzt zu werden. Das setzt ein lokales Dateisystem mit funktionierenden Ersetzungsoperationen voraus. Bestehende Installationen brauchen zusätzlich `RuntimeFiles.ps1` im geschützten Programmordner.
