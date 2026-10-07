@@ -36,9 +36,13 @@ ACLs separate the protected system folder from the user-readable status display.
 
 ## Getting started
 
-Windows 10/11, Windows PowerShell 5.1, and administrator privileges. The [setup guide](docs/GUIDE.en.md#5-set-it-up-from-scratch-how-the-existing-installation-is-built) describes the existing installation, including files, ACLs, and the SYSTEM task.
+Windows 10/11: download and extract the repository, open Windows PowerShell as administrator in its folder and run the [guided installer](docs/INSTALLER.md):
 
-A complete fresh-PC installation has not been verified. Some scripts assume the account name `Verwalter`; changing `ExcludeUsers` alone is insufficient. PIN files and the local `Set-PIN.ps1` tool are not published. Start with a test account.
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
+```
+
+Choose an administrator account, time limits and PINs. Monitoring starts off; existing installations are never overwritten. **The complete Windows installer flow is not yet verified** – use a fresh test PC first. [Setup and uninstall](docs/INSTALLER.md) · [Manual setup](docs/GUIDE.en.md)
 
 ## Existing verification
 

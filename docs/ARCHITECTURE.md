@@ -23,6 +23,6 @@ The diagrams in the READMEs describe the existing implementation. This document 
 
 ## Existing setup assumptions
 
-Some scripts hard-code `Verwalter` for Windows password changes or session selection. Documentation uses generic account roles, but code and configuration remain unchanged. Adjusting `ExcludeUsers` does not remove every account-name dependency.
+Some scripts hard-code `Verwalter` for Windows password changes or session selection. Documentation uses generic account roles, but code and configuration remain unchanged. Adjusting `ExcludeUsers` does not remove every account-name dependency. The guided `Install.ps1` adapts these account literals only in installed copies of `KsAdmin.ps1` and `Zerotest.ps1`; it does not modify repository runtime files.
 
 The installation guides describe an existing Windows setup; a fresh-machine installation and the full multi-hour sequence are not claimed as verified. See the [German verification table](DOCUMENTATION.md#was-geprüft-ist-und-was-nicht) or [English verification table](DOCUMENTATION.en.md#what-is-verified-and-what-is-not).

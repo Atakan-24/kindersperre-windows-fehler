@@ -36,9 +36,13 @@ ACLs trennen den geschützten Systemordner von der für Benutzer lesbaren Status
 
 ## Einstieg
 
-Windows 10/11 mit Windows PowerShell 5.1 und Administratorrechten. Die [Einrichtungsanleitung](docs/ANLEITUNG.md#5-neu-einrichten-aufbau-der-vorhandenen-installation) beschreibt die bestehende Installation einschließlich Dateien, ACLs und SYSTEM-Aufgabe.
+Für Windows 10/11 gibt es einen [geführten PowerShell-Installer](docs/INSTALLER.md): Repository herunterladen und entpacken, Windows PowerShell als Administrator im Ordner öffnen und ausführen:
 
-Die Einrichtung auf einem frischen PC ist nicht als vollständiger Installationsablauf verifiziert. Einige Skripte setzen den Kontonamen `Verwalter` voraus; `ExcludeUsers` allein reicht zur Anpassung nicht aus. PIN-Dateien und das lokale Werkzeug `Set-PIN.ps1` werden nicht veröffentlicht. Zuerst mit einem Testkonto prüfen.
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
+```
+
+Er fragt nach Administratorkonto, Zeitlimits und PINs; die Überwachung bleibt zunächst aus. Bestehende Installationen werden nicht überschrieben. **Der vollständige Installer-Ablauf auf Windows ist noch ungeprüft** – zuerst auf einem frischen Test-PC nutzen. [Einrichtung und Deinstallation](docs/INSTALLER.md) · [Manuelle Einrichtung](docs/ANLEITUNG.md)
 
 ## Bisherige Prüfung
 

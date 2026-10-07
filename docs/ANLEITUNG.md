@@ -1,5 +1,7 @@
 # Anleitung: Einrichten, Einstellen, Aktivieren
 
+Für neue Test-PCs gibt es jetzt einen [geführten Installer mit PIN-Einrichtung und Deinstaller](INSTALLER.md). Die manuelle Anleitung unten beschreibt weiterhin die ursprüngliche Installation.
+
 [Zurück zur Übersicht](../README.md) · [Guide in English](GUIDE.en.md)
 
 Diese Anleitung beschreibt, wie die Kindersperre aufgebaut ist, wie man sie **einstellt** und wie man sie **ein- und ausschaltet**.

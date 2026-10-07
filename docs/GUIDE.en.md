@@ -1,5 +1,7 @@
 # Guide: install, configure, activate
 
+New test PCs can use the [guided installer with PIN setup and uninstaller](INSTALLER.md). The manual guide below still describes the original installation.
+
 [Back to the overview](../README.en.md) · [Anleitung (Deutsch)](ANLEITUNG.md)
 
 This guide describes how the lock is built, how to **configure** it and how to **switch it on and off**. Everything runs on
