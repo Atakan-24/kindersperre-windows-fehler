@@ -1,4 +1,4 @@
-# NVIADA Error save you kind
+# Windows Screen Time Manager
 
 A Windows screen-time management and parental-control system built with **PowerShell**, **Windows Task Scheduler/SYSTEM**, **WTS session handling**, **ACLs**, **Win32/.NET APIs**, **PBKDF2**, and **JSON configuration**.
 
