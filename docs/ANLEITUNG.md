@@ -10,9 +10,11 @@ Alles läuft unter Windows 10/11 mit Windows PowerShell 5.1.
 > läuft ja schon). Auf einem frischen PC bitte zuerst mit einem Testkonto probieren. Die PIN-Datei (`pin.json`) und das Werkzeug
 > `Set-PIN.ps1` sind absichtlich nicht im Repository.
 
+**Kontonamen:** Die Dokumentation verwendet neutrale Rollen. Die bestehenden Skripte setzen teilweise den Kontonamen `Verwalter` voraus; Details und Grenzen stehen in der [vollständigen Dokumentation](DOCUMENTATION.md#ausgangslage).
+
 ## 1. Im Alltag: das Einstellungs-Fenster
 
-1. Auf dem Desktop von **Verwalter** das Symbol **„Systemdiagnose"** doppelklicken (startet `KsAdmin.ps1`).
+1. Auf dem Desktop von **Administrator** das Symbol **„Systemdiagnose"** doppelklicken (startet `KsAdmin.ps1`).
 2. Beim ersten Start ein **Werkzeug-Passwort** festlegen (mindestens 4 Zeichen, unabhängig vom Windows-Passwort). Danach
    fragt das Fenster bei jedem Start danach.
 3. Einstellungen ändern. **Es wird sofort automatisch gespeichert**, es gibt keinen Speichern-Knopf. Eine laufende Sperre
@@ -44,7 +46,7 @@ Alles läuft unter Windows 10/11 mit Windows PowerShell 5.1.
 | **Vorübergehend ausschalten** | Reiter „Grenzwerte": Überwachung **aus** (oder `"Enabled": false`). Eine laufende Sperre endet dann nach höchstens 5 Sekunden. |
 | **Ganz stoppen** | Als Administrator: `Disable-ScheduledTask -TaskName Kindersperre` |
 | **Wieder starten** | `Enable-ScheduledTask -TaskName Kindersperre` |
-| Sperre sofort auslösen | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\Kindersperre\Zero.ps1` (als Administrator; sperrt Verwalter nie) |
+| Sperre sofort auslösen | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\Kindersperre\Zero.ps1` (als Administrator; sperrt das ausgenommene Administratorkonto nie) |
 | Sperre aufheben | `...\Zerooff.ps1` (ist der echte Grenzwert erreicht, bleibt sie bestehen; das Skript meldet es) |
 | Komplett-Test (ohne den echten Zähler zu ändern) | Reiter „Vorschau" → „Komplett-Diagnose", oder `...\Zerotest.ps1` |
 

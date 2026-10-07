@@ -9,9 +9,11 @@ Windows 10/11 with Windows PowerShell 5.1.
 > there were assembled from the running task, but **not executed again** on this PC (the installation already runs). On a fresh PC,
 > try it with a test account first. The PIN file (`pin.json`) and the tool `Set-PIN.ps1` are deliberately not in the repository.
 
+**Account names:** Documentation uses generic roles. Some existing scripts assume the account name `Verwalter`; see the [full documentation](DOCUMENTATION.en.md#background) for compatibility limits.
+
 ## 1. Day to day: the settings window
 
-1. On **Verwalter's** desktop double-click the **"Systemdiagnose"** icon (starts `KsAdmin.ps1`).
+1. On the **administrator's** desktop double-click the **"Systemdiagnose"** icon (starts `KsAdmin.ps1`).
 2. On first start choose a **tool password** (at least 4 characters, independent of the Windows password). The window asks for it
    on every later start.
 3. Change settings. **They are saved automatically and immediately**, there is no save button. A running lock picks changes up
@@ -43,7 +45,7 @@ Windows 10/11 with Windows PowerShell 5.1.
 | **Switch off temporarily** | tab "Grenzwerte": monitoring **off** (or `"Enabled": false`). A running lock ends within 5 seconds. |
 | **Stop completely** | as administrator: `Disable-ScheduledTask -TaskName Kindersperre` |
 | **Start again** | `Enable-ScheduledTask -TaskName Kindersperre` |
-| Lock immediately | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\Kindersperre\Zero.ps1` (as administrator; never locks Verwalter) |
+| Lock immediately | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\Kindersperre\Zero.ps1` (as administrator; never locks the excluded administrator account) |
 | Lift the lock | `...\Zerooff.ps1` (if the real threshold is reached the lock stays; the script says so) |
 | Full test (without changing the real counter) | tab "Vorschau" → "Komplett-Diagnose", or `...\Zerotest.ps1` |
 

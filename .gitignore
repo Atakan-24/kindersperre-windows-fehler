@@ -29,3 +29,7 @@ shot-aktuell*.png
 shot-term*.png
 shot-nvbar.png
 shot-riot.png
+
+# Local development backups and intermediate files
+*.bak-vor-*
+*.neu
