@@ -14,9 +14,10 @@ param(
 )
 
 $Dir       = 'C:\ProgramData\Kindersperre'
+. (Join-Path $PSScriptRoot 'RuntimeFiles.ps1')
 $StateFile = Join-Path $Dir 'zeit.json'
 $LogFile   = Join-Path $Dir 'log.txt'
-$cfg       = Get-Content (Join-Path $Dir 'config.json') -Raw | ConvertFrom-Json
+$cfg       = Get-Content (Join-Path $Dir 'config.json') -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
 # LimitMin wird jetzt pro Wochentag berechnet, siehe Get-LimitMinForToday unten
 $GraceMin  = [double]$cfg.GraceMin
 $IdleMin   = [double]$cfg.IdleMin
@@ -294,8 +295,7 @@ function Update-Regen($st, $c, [double]$unusedMin, [bool]$wasActive) {
 # ---------------- normaler Lauf ----------------
 $now    = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $dayKey = Get-DayKey
-$state  = $null
-if (Test-Path $StateFile) { try { $state = Get-Content $StateFile -Raw | ConvertFrom-Json } catch { } }
+$state  = Read-RuntimeState $StateFile
 if (-not $state) {
     $state = [pscustomobject]@{ date = $dayKey; minutes = 0.0; sent = @(); last = $now }
     Log 'Zaehler neu angelegt'
@@ -362,7 +362,8 @@ if ([double]$state.minutes -lt $lockAt -and -not $force) {
     $rest = $lockAt - [double]$state.minutes
     # Vorwarnungen: 30/15/5 Min vor Ende der Spielzeit, dann Nachspielzeit-Beginn, dann 5 und 1 Min vor der Sperre
     $wm = @(); if ($null -ne $cfg.WarnMinutes) { $wm = @($cfg.WarnMinutes | Where-Object { $null -ne $_ } | ForEach-Object { [int]$_ } | Where-Object { $_ -gt 0 }) }
-    $steps = $(if ($wm.Count -gt 0) { $wm } else { @($G, 1) }) | Sort-Object -Descending -Unique   # config WarnMinutes (Verwaltungs-Tool), sonst 15 Min (Beginn Nachspielzeit) und 1 Min vor der Sperre    $sent  = @($sent | Where-Object { $rest -le $_ })                       # Schwellen wieder freigeben (z. B. nach Bonus)
+    $steps = $(if ($wm.Count -gt 0) { $wm } else { @($G, 1) }) | Sort-Object -Descending -Unique
+    $sent  = @($sent | Where-Object { $rest -le $_ }) # Schwellen nach Bonus wieder freigeben
     $due   = @($steps | Where-Object { $rest -le $_ -and $sent -notcontains $_ })
     if ($cfg.WarnSkipDay -eq $dayKey) { $keep = if ($cfg.WarnKeep) { @($cfg.WarnKeep | ForEach-Object { [double]$_ }) } else { @(1.0) }; $due = @($due | Where-Object { $keep -contains [double]$_ }) }   # Nutzerwunsch: an diesem Tag nur die Warnungen aus config WarnKeep (Minuten); ohne WarnKeep nur 1 Min. WarnSkipDay = Tagesschluessel; loeschen = alle Warnungen wieder an
     if ($due.Count -gt 0 -and $active.Count -gt 0) {
@@ -416,7 +417,7 @@ if ([double]$state.minutes -lt $lockAt -and -not $force -and $cfg.PinGlitch -ne 
         }
     }
 }
-$state | ConvertTo-Json | Out-File $StateFile -Encoding ascii
+Write-AtomicText $StateFile ($state | ConvertTo-Json)
 
 # Einfache, fuer Standardbenutzer lesbare Statusanzeige (kein Bestandteil der eigentlichen Sperre): ein Balken-Prozentwert
 # in einem oeffentlich lesbaren Ordner, damit ein kleines Anzeigefenster auf dem Desktop ihn zeigen kann, ohne Zugriff

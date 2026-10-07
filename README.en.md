@@ -2,7 +2,7 @@
 
 A Windows screen-time management and parental-control system built with **PowerShell**, **Windows Task Scheduler/SYSTEM**, **WTS session handling**, **ACLs**, **Win32/.NET APIs**, **PBKDF2**, and **JSON configuration**.
 
-System-wide time tracking runs in the background; status and lock interfaces appear in the active user session. Developed with assistance from Claude Code.
+System-wide time tracking runs in the background; status and lock interfaces appear in the active user session.
 
 [Deutsch](README.md) · [Full documentation and screenshots](docs/DOCUMENTATION.en.md) · [Setup and usage guide](docs/GUIDE.en.md)
 
@@ -56,3 +56,9 @@ The existing setup has been tested. The [full documentation](docs/DOCUMENTATION.
 - [Security](docs/DOCUMENTATION.en.md#security)
 
 Error and repair screens are simulations, not actual hardware or operating-system failures. This project is not affiliated with Microsoft or NVIDIA.
+
+## Automated checks
+
+`powershell.exe -NoProfile -File tests/Test-Logic.ps1` parses all scripts and exercises pure file-persistence and break-recovery logic. GitHub Actions runs it on Windows PowerShell 5.1 and PowerShell 7. It does not install software, start SYSTEM tasks or exercise Win32 session APIs.
+
+State and configuration use temporary-file replacement and retain a `.bak`. Corrupt usage state falls back to a readable backup or raises an error instead of silently resetting. This depends on local filesystem replacement semantics. Existing installations also need `RuntimeFiles.ps1` copied into the protected application directory.
