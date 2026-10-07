@@ -1,7 +1,17 @@
-# Kindersperre (privates Backup)
+# Windows Screen Time Manager
 
-Eigene Bildschirmzeit-Kindersicherung für den Familien-PC `cenks-pc`, gebaut mit Claude Code.
-Dieses Repository ist **privat** und dient als Sicherung und Dokumentation für den Besitzer/Administrator (Konto Verwalter).
+Ein Windows-System zur Bildschirmzeitverwaltung und Kindersicherung (Screen-Time / Parental Control), entwickelt mit **PowerShell**, **Windows Task Scheduler im SYSTEM-Kontext**, **WTS Session Handling**, **ACLs**, **Win32/.NET APIs**, **PBKDF2** und **JSON-Konfiguration**.
+
+Das Projekt verbindet systemweite Zeiterfassung mit einer Oberfläche in der aktiven Benutzersitzung. Tageslimits, Vorab-Meldungen, Bonuszeit und Erholung sind über ein Administrationsfenster konfigurierbar. Die Architektur trennt privilegierte Hintergrundaufgaben, die interaktive Anzeige und geschützte Konfigurationsdateien.
+
+**Technische Schwerpunkte**
+
+- **PowerShell und Task Scheduler:** regelmäßige Ausführung als SYSTEM, einschließlich Start und Anmeldung.
+- **Session Handling und Win32/.NET:** WTS-Sitzungen, Prozessstart in Benutzersitzungen und grafische Oberflächen.
+- **ACLs und PBKDF2:** getrennte Zugriffsrechte sowie gesalzene PIN- und Werkzeug-Passwort-Hashes; Zugangsdaten sind nicht Bestandteil des Repositorys.
+- **JSON-Konfiguration:** anpassbare Grenzwerte, Warnungen, Anzeigeoptionen und Erholungslogik.
+
+Die Sperranzeige verwendet simulierte Windows-Fehler- und Reparaturbildschirme sowie konfigurierbare Grafikeffekte. Die folgende Dokumentation beschreibt den Ablauf, die Installation, Screenshots und die Grenzen der bisherigen Tests. Entwickelt mit Unterstützung von Claude Code.
 
 **[English version: README.en.md](README.en.md)** · **[Anleitung: Einrichten, Einstellen, Aktivieren](docs/ANLEITUNG.md)** · **[Guide in English](docs/GUIDE.en.md)**
 
