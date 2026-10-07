@@ -38,7 +38,7 @@ if ($removeData) {
     Remove-Item -LiteralPath $dir -Recurse -Force
     if (Test-Path -LiteralPath $nv) { Remove-Item -LiteralPath $nv -Recurse -Force }
 } else {
-    foreach ($file in 'Sperre.ps1','RuntimeFiles.ps1','Bildschirm.ps1','KsAdmin.ps1','Zero.ps1','Zerooff.ps1','Zerotest.ps1','IdleProbe.cs','IdleProbe.exe') { Remove-Item -LiteralPath (Join-Path $dir $file) -Force -ErrorAction SilentlyContinue }
+    foreach ($file in 'Sperre.ps1','Bildschirm.ps1','KsAdmin.ps1','Zero.ps1','Zerooff.ps1','Zerotest.ps1','IdleProbe.cs','IdleProbe.exe') { Remove-Item -LiteralPath (Join-Path $dir $file) -Force -ErrorAction SilentlyContinue }
     foreach ($folder in 'assets','preview') { Remove-Item -LiteralPath (Join-Path $dir $folder) -Recurse -Force -ErrorAction SilentlyContinue }
     Remove-Item -LiteralPath "$nv\NvBar.ps1" -Force -ErrorAction SilentlyContinue
     Write-Host 'Private data and this uninstaller remain in the protected folder. Reinstallation refuses existing folders.'
